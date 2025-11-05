@@ -5,25 +5,25 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
+from pptx.oxml.xmlchemy import OxmlElement   # <— nodig voor echte bullets
 
+# layouts
 TITLE_LAYOUT = 0
 TITLE_ONLY_LAYOUT = 5
 BLANK_LAYOUT = 6
 
 MAX_LINES_PER_SLIDE = 12
 CHARS_PER_LINE = 75
-MAX_BOTTOM_INCH = 6.6  # ongeveer onderrand
+MAX_BOTTOM_INCH = 6.6
 
 
+# ---------- helpers docx ----------
 def extract_images(doc):
     imgs = []
     idx = 1
     for rel in doc.part.rels.values():
         if rel.reltype == RT.IMAGE:
-            blob = rel.target_part.blob
-            ext = rel.target_part.partname.ext
-            filename = f"image_{idx}.{ext}"
-            imgs.append((filename, blob))
+            imgs.append((f"image_{idx}.{rel.target_part.partname.ext}", rel.target_part.blob))
             idx += 1
     return imgs
 
@@ -48,6 +48,33 @@ def estimate_line_count(text: str) -> int:
     if not text:
         return 0
     return max(1, math.ceil(len(text) / CHARS_PER_LINE))
+
+
+# ---------- helpers pptx ----------
+def make_bullet(paragraph):
+    """
+    Maak van deze paragraaf een ECHTE bullet, niet alleen tekst met '• '.
+    Gebaseerd op de bekende workaround voor python-pptx. :contentReference[oaicite:1]{index=1}
+    """
+    pPr = paragraph._p.get_or_add_pPr()
+    # marge links en inspringing een beetje normaal
+    pPr.set("marL", "342900")     # ~0.35 cm
+    pPr.set("indent", "-171450")  # bullet iets naar links t.o.v. tekst
+
+    # bullet-size
+    buSz = OxmlElement("a:buSzPct")
+    buSz.set("val", "350000")     # 350%
+    pPr.append(buSz)
+
+    # bullet-font
+    buFont = OxmlElement("a:buFont")
+    buFont.set("typeface", "Arial")
+    pPr.append(buFont)
+
+    # bullet-char zelf
+    buChar = OxmlElement("a:buChar")
+    buChar.set("char", "•")
+    pPr.append(buChar)
 
 
 def add_textbox(slide, text, top_inch=1.0, est_lines=1):
@@ -96,9 +123,10 @@ def add_inline_image(slide, img_bytes, top_inch):
     top = Inches(top_inch)
     width = Inches(4.5)
     slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width)
-    return 3.0  # gebruikte hoogte
+    return 3.0
 
 
+# ---------- main converter ----------
 def docx_to_pptx(file_like):
     doc = Document(file_like)
     prs = Presentation()
@@ -110,7 +138,7 @@ def docx_to_pptx(file_like):
     current_y = 2.0
     used_lines = 0
 
-    # state voor een lopend lijstje
+    # state voor doorlopende lijst
     current_list_tf = None
     current_list_top = 0.0
     current_list_lines = 0
@@ -123,12 +151,12 @@ def docx_to_pptx(file_like):
         is_bold_title = has_bold(para) and not has_image and not is_word_list_paragraph(para)
         is_list = is_word_list_paragraph(para)
 
-        # als we uit een lijst lopen → reset
+        # lijst stopt zodra we geen list-paragraaf meer hebben
         if not is_list:
             current_list_tf = None
             current_list_lines = 0
 
-        # 1. kop / vet → nieuwe dia
+        # kop → nieuwe dia
         if is_heading or is_bold_title:
             current_slide = create_title_only_slide(prs, para_text_plain(para))
             current_y = 2.0
@@ -136,7 +164,7 @@ def docx_to_pptx(file_like):
             current_list_tf = None
             continue
 
-        # 2. afbeelding
+        # afbeelding
         if has_image:
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
@@ -151,15 +179,15 @@ def docx_to_pptx(file_like):
                     used_lines = 0
             continue
 
-        # 3. lijst → één textbox, meerdere paragrafen met '• '
+        # echte lijst
         if is_list and text:
             lines_needed = estimate_line_count(text)
 
-            # past het niet → nieuwe blanco dia + nieuw lijstblok
+            # past niet → nieuwe dia en nieuw lijstvak
             if (
                 used_lines + lines_needed > MAX_LINES_PER_SLIDE
                 or current_y + 0.6 > MAX_BOTTOM_INCH
-                or current_list_tf is None and used_lines >= MAX_LINES_PER_SLIDE
+                or (current_list_tf is None and used_lines >= MAX_LINES_PER_SLIDE)
             ):
                 current_slide = create_blank_slide(prs)
                 current_y = 1.0
@@ -168,7 +196,7 @@ def docx_to_pptx(file_like):
                 current_list_lines = 0
 
             if current_list_tf is None:
-                # eerste bullet van dit blok
+                # nieuw lijstvak
                 left = Inches(0.8)
                 top = Inches(current_y)
                 width = Inches(8.0)
@@ -177,7 +205,8 @@ def docx_to_pptx(file_like):
                 tf = shape.text_frame
                 tf.clear()
                 p = tf.paragraphs[0]
-                p.text = f"• {text}"
+                p.text = text
+                make_bullet(p)
                 for r in p.runs:
                     r.font.name = "Arial"
                     r.font.size = Pt(16)
@@ -186,18 +215,18 @@ def docx_to_pptx(file_like):
                 current_list_lines = lines_needed
             else:
                 p = current_list_tf.add_paragraph()
-                p.text = f"• {text}"
+                p.text = text
+                make_bullet(p)
                 for r in p.runs:
                     r.font.name = "Arial"
                     r.font.size = Pt(16)
                 current_list_lines += lines_needed
 
             used_lines += lines_needed
-            # zet Y onder het hele blok
             current_y = current_list_top + 0.35 * current_list_lines + 0.3
             continue
 
-        # 4. gewone tekst
+        # gewone tekst
         if text:
             lines_needed = estimate_line_count(text)
             if (
@@ -216,3 +245,4 @@ def docx_to_pptx(file_like):
     prs.save(out)
     out.seek(0)
     return out
+
