@@ -9,9 +9,9 @@ st.set_page_config(page_title="Stermonitor HTML Converter")
 
 st.title("Stermonitor HTML Converter (met Cloudinary)")
 st.write(
-    "Upload een Word (.docx) bestand. Tekst wordt omgezet naar HTML "
-    "en afbeeldingen worden automatisch naar Cloudinary geüpload "
-    "met een vaste grootte van 300×300 px."
+    "Upload een Word (.docx) bestand. "
+    "Tekst wordt omgezet naar HTML, afbeeldingen worden naar Cloudinary geüpload "
+    "en opsommingen worden automatisch herkend."
 )
 
 uploaded = st.file_uploader("Kies een Word-bestand", type=["docx"])
@@ -66,12 +66,24 @@ def upload_to_cloudinary(filename, data):
         return None
 
 
+def is_list_item(text: str) -> bool:
+    """Eenvoudige herkenning van opsommingen."""
+    if not text:
+        return False
+    stripped = text.lstrip()
+    return (
+        stripped.startswith("- ")
+        or stripped.startswith("* ")
+        or stripped.startswith("• ")
+    )
+
+
 def docx_to_html(file):
-    """Zet tekst en afbeeldingen uit docx om naar HTML met vaste afbeeldingsstijl."""
+    """Zet tekst, afbeeldingen en lijstjes uit docx om naar HTML."""
     doc = Document(file)
     html_parts = []
-    buffer = ""
-
+    buffer = ""          # voor gewone alinea's die we per zin willen bundelen
+    in_list = False      # zijn we nu in een <ul> ... </ul>
     images = extract_images(doc)
     image_urls = [upload_to_cloudinary(f, b) for f, b in images]
     img_counter = 0
@@ -79,11 +91,18 @@ def docx_to_html(file):
     for para in doc.paragraphs:
         text = para.text.strip()
 
-        # Koppen (Kop 1, 2, 3…)
+        # 1. HEADINGS
         if para.style.name.startswith("Heading"):
+            # openstaande buffer eerst wegschrijven
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
+            # openstaande lijst eerst sluiten
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+
+            # heading genereren
             try:
                 level = int(para.style.name.split()[-1])
             except ValueError:
@@ -91,12 +110,18 @@ def docx_to_html(file):
             html_parts.append(f"<h{level}>{text}</h{level}>")
             continue
 
-        # Afbeelding in paragraaf
+        # 2. AFBEELDING in deze paragraaf?
         has_image = any("graphic" in run._element.xml for run in para.runs)
         if has_image:
+            # eerst buffer wegschrijven
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
+            # openstaande lijst sluiten
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+
             if img_counter < len(image_urls) and image_urls[img_counter]:
                 img_url = image_urls[img_counter]
                 html_parts.append(
@@ -109,15 +134,44 @@ def docx_to_html(file):
             img_counter += 1
             continue
 
-        # Gewone tekst → voeg samen tot einde van zin
+        # 3. LIJST-ITEM?
+        if is_list_item(text):
+            # buffer eerst wegschrijven
+            if buffer:
+                html_parts.append(f"<p>{buffer.strip()}</p>")
+                buffer = ""
+            # als we nog niet in een lijst zaten, begin er een
+            if not in_list:
+                html_parts.append("<ul>")
+                in_list = True
+            # tekst zonder het opsommingsteken
+            stripped = text.lstrip()
+            if stripped[0] in "-*•":
+                item_text = stripped[2:]
+            else:
+                item_text = stripped
+            html_parts.append(f"<li>{item_text}</li>")
+            continue
+
+        # 4. GEWONE TEKST
         if text:
+            # als we net in een lijst zaten en nu gewone tekst krijgen: lijst sluiten
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+
             buffer += " " + text
+            # als tekst eindigt op punt/vraagteken/uitroepteken, schrijf de alinea weg
             if re.search(r"[.!?]$", text):
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
 
+    # na de loop: openstaande buffer wegschrijven
     if buffer:
         html_parts.append(f"<p>{buffer.strip()}</p>")
+    # openstaande lijst sluiten
+    if in_list:
+        html_parts.append("</ul>")
 
     return "\n".join(html_parts)
 
