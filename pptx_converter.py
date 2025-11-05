@@ -13,12 +13,13 @@ TITLE_LAYOUT = 0
 TITLE_ONLY_LAYOUT = 5
 BLANK_LAYOUT = 6
 
+# instellingen
 MAX_LINES_PER_SLIDE = 12
 CHARS_PER_LINE = 75
-MAX_BOTTOM_INCH = 6.6  # tot hier willen we tekst/afbeelding op de dia
+MAX_BOTTOM_INCH = 6.6  # tot waar we willen schrijven op de dia
 
 
-# ------------ DOCX helpers ------------
+# ---------- DOCX helpers ----------
 def extract_images(doc):
     imgs = []
     idx = 1
@@ -54,24 +55,23 @@ def estimate_line_count(text: str) -> int:
     return max(1, math.ceil(len(text) / CHARS_PER_LINE))
 
 
-# ------------ PPTX helpers ------------
+# ---------- PPTX helpers ----------
 def make_bullet(paragraph):
     """
-    Maak van een paragraaf een échte PowerPoint-bullet.
-    Belangrijk: eerst een eventuele <a:buNone> weghalen.
+    Maak van een paragraaf een échte PowerPoint-bullet
+    met extra ruimte tussen bullet en tekst (~8 mm).
     """
     pPr = paragraph._p.get_or_add_pPr()
 
-    # 1. verwijder buNone als die er is
+    # buNone weghalen als die er staat
     for child in list(pPr):
         if child.tag == qn("a:buNone"):
             pPr.remove(child)
 
-    # 2. indent & marge
-    pPr.set(qn("a:marL"), "342900")     # beetje naar rechts
-    pPr.set(qn("a:indent"), "-171450")  # bullet iets naar links t.o.v. tekst
+    # 8 mm ≈ 0.8 cm ≈ 288000 EMU
+    pPr.set(qn("a:marL"), "288000")     # waar de tekst begint
+    pPr.set(qn("a:indent"), "-144000")  # bullet iets naar links t.o.v. tekst
 
-    # 3. bullet teken
     buChar = OxmlElement("a:buChar")
     buChar.set(qn("a:char"), "•")
     pPr.append(buChar)
@@ -123,10 +123,10 @@ def add_inline_image(slide, img_bytes, top_inch):
     top = Inches(top_inch)
     width = Inches(4.5)
     slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width)
-    return 3.0
+    return 3.0  # aangenomen hoogte die we innemen
 
 
-# ------------ MAIN CONVERTER ------------
+# ---------- MAIN ----------
 def docx_to_pptx(file_like):
     doc = Document(file_like)
     prs = Presentation()
@@ -138,7 +138,7 @@ def docx_to_pptx(file_like):
     current_y = 2.0
     used_lines = 0
 
-    # voor lopende opsomming
+    # state voor lopende opsomming
     current_list_tf = None
     current_list_top = 0.0
     current_list_lines = 0
@@ -151,7 +151,7 @@ def docx_to_pptx(file_like):
         is_bold_title = has_bold(para) and not has_image and not is_word_list_paragraph(para)
         is_list = is_word_list_paragraph(para)
 
-        # stoppen met lijst als dit geen lijstparagraaf is
+        # als we een andere soort paragraaf krijgen dan lijst → lijst afsluiten
         if not is_list:
             current_list_tf = None
             current_list_lines = 0
@@ -164,7 +164,7 @@ def docx_to_pptx(file_like):
             current_list_tf = None
             continue
 
-        # 2. afbeelding → zoveel mogelijk op huidige dia
+        # 2. afbeelding
         if has_image:
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
@@ -179,11 +179,11 @@ def docx_to_pptx(file_like):
                     used_lines = 0
             continue
 
-        # 3. lijst → echte bullets
+        # 3. lijst → één textbox met echte bullets
         if is_list and text:
             lines_needed = estimate_line_count(text)
 
-            # past niet op deze dia → nieuwe blanco dia
+            # past het niet meer, maak een nieuwe blanco dia
             if (
                 used_lines + lines_needed > MAX_LINES_PER_SLIDE
                 or current_y + 0.6 > MAX_BOTTOM_INCH
@@ -223,7 +223,7 @@ def docx_to_pptx(file_like):
                 current_list_lines += lines_needed
 
             used_lines += lines_needed
-            # onder dit hele blok verder
+            # Y net onder het lijstblok zetten
             current_y = current_list_top + 0.35 * current_list_lines + 0.3
             continue
 
@@ -242,6 +242,7 @@ def docx_to_pptx(file_like):
             current_y += h_used + 0.15
             used_lines += lines_needed
 
+    # opslaan naar bytes
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
