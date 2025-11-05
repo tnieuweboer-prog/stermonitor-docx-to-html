@@ -3,7 +3,7 @@ import streamlit as st
 import streamlit as st
 from pptx_converter_ai import docx_to_pptx_ai
 from html_converter import docx_to_html
-from pptx_converter import docx_to_pptx
+from pptx_converter_ai import docx_to_pptx
 # plus eventuele Cloudinary-setup hier of in html_converter via callback
 
 st.title("Triade DOCX Converter")
