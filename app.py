@@ -10,15 +10,14 @@ st.set_page_config(page_title="Stermonitor HTML Converter")
 st.title("Stermonitor HTML Converter (met Cloudinary)")
 st.write(
     "Upload een Word (.docx) bestand. "
-    "Tekst wordt omgezet naar HTML, afbeeldingen worden geüpload naar Cloudinary, "
-    "opsommingen (• zoals in Word) worden herkend en omgezet naar <ul><li>."
+    "Tekst wordt omgezet naar HTML, afbeeldingen worden naar Cloudinary geüpload, "
+    "Word-opsommingen worden herkend en omgezet naar "
+    '<ul class="browser-default">...</ul>.'
 )
 
 uploaded = st.file_uploader("Kies een Word-bestand", type=["docx"])
 
-# ─────────────────────────────
-# Cloudinary configureren
-# ─────────────────────────────
+# ───────── Cloudinary config check ─────────
 required_keys = ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"]
 missing = [k for k in required_keys if k not in st.secrets]
 if missing:
@@ -33,7 +32,7 @@ else:
         api_secret=st.secrets["CLOUDINARY_API_SECRET"],
         secure=True,
     )
-# ─────────────────────────────
+# ───────────────────────────────────────────
 
 
 def extract_images(doc):
@@ -67,18 +66,21 @@ def upload_to_cloudinary(filename, data):
         return None
 
 
-# ⭐ belangrijk: echte Word-lijsten herkennen
 def is_word_list_paragraph(para):
     """
-    Probeert te bepalen of dit een opsomming is.
-    - veel NL/ENG Word versies geven style 'List Paragraph' of 'Lijstparagraaf'
-    - docx bewaart nummering in pPr/numPr
+    Herken een Word-opsomming.
+    We kijken naar:
+    - style name (List Paragraph / Lijstparagraaf / Opsomming)
+    - numPr in pPr (echte docx-numbering)
     """
     style_name = (para.style.name or "").lower()
-    if "list" in style_name or "lijst" in style_name:
+    if (
+        "list" in style_name
+        or "lijst" in style_name
+        or "opsom" in style_name  # vangt 'Opsommingstekens' op
+    ):
         return True
 
-    # check op numPr (echte docx-numbering)
     p = para._p
     ppr = p.pPr
     if ppr is not None and ppr.numPr is not None:
@@ -101,13 +103,11 @@ def docx_to_html(file):
     for para in doc.paragraphs:
         text = (para.text or "").strip()
 
-        # 1. koppen
+        # 1. HEADINGS
         if para.style.name.startswith("Heading"):
-            # eerst openstaande tekst wegschrijven
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
-            # openstaande lijst sluiten
             if in_list:
                 html_parts.append("</ul>")
                 in_list = False
@@ -119,14 +119,12 @@ def docx_to_html(file):
             html_parts.append(f"<h{level}>{text}</h{level}>")
             continue
 
-        # 2. afbeelding?
+        # 2. AFBEELDING
         has_image = any("graphic" in run._element.xml for run in para.runs)
         if has_image:
-            # eerst openstaande tekst wegschrijven
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
-            # openstaande lijst sluiten
             if in_list:
                 html_parts.append("</ul>")
                 in_list = False
@@ -143,35 +141,31 @@ def docx_to_html(file):
             img_idx += 1
             continue
 
-        # 3. Word-lijst?
+        # 3. OPSOMMING (Word bullet / nummering)
         if is_word_list_paragraph(para):
-            # tekstbuffer eerst weg
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
-            # nieuwe lijst starten als we er nog niet in zitten
             if not in_list:
-                html_parts.append("<ul>")
+                # ← hier jouw vereiste class
+                html_parts.append('<ul class="browser-default">')
                 in_list = True
 
-            # in Word staat de bullet niet in de text, dus text is de echte inhoud
             html_parts.append(f"<li>{text}</li>")
             continue
 
-        # 4. gewone tekst
+        # 4. GEWONE TEKST
         if text:
-            # als we in een lijst zaten en er komt gewone tekst → lijst sluiten
             if in_list:
                 html_parts.append("</ul>")
                 in_list = False
 
             buffer += " " + text
-            # als de regel eindigt op . ! ? dan schrijven we 'm weg
             if re.search(r"[.!?]$", text):
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
 
-    # na alle paragrafen
+    # einde document
     if buffer:
         html_parts.append(f"<p>{buffer.strip()}</p>")
     if in_list:
@@ -180,9 +174,7 @@ def docx_to_html(file):
     return "\n".join(html_parts)
 
 
-# ─────────────────────────────
-# UI
-# ─────────────────────────────
+# ───────── UI ─────────
 if uploaded:
     html_output = docx_to_html(uploaded)
     st.subheader("Gegenereerde HTML-code")
