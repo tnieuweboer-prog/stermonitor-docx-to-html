@@ -42,7 +42,7 @@ else:
 
 
 def extract_images(doc):
-    """Haal alle afbeeldingen uit het Word-document."""
+    """Haal alle afbeeldingen uit het Word-document (voor HTML én PPTX)."""
     images = []
     idx = 1
     for rel in doc.part.rels.values():
@@ -208,71 +208,82 @@ def docx_to_html(file, platform="Stermonitor"):
     return "\n".join(html_parts)
 
 
-# ------------- PPTX-deel -------------
+# --------- PPTX-DEEL: per kop 1 dia, afbeeldingen invoegen ---------
 
 
-def _get_text_frame_from_slide(slide, prs):
-    """Probeer een text_frame op deze slide te vinden, anders nieuwe slide met body."""
+def _get_body_on_slide(slide, prs):
+    """Zoek een tekstvak op de slide; zo niet, maak een nieuwe slide met body."""
     for shape in slide.shapes:
         if hasattr(shape, "text_frame"):
             return shape.text_frame, slide
-
-    # geen tekstvak → maak nieuwe slide met layout 'Title and Content'
+    # geen tekstvak → nieuwe slide met layout 1 (title and content)
     new_slide = prs.slides.add_slide(prs.slide_layouts[1])
     return new_slide.shapes.placeholders[1].text_frame, new_slide
 
 
 def docx_to_pptx(doc_bytes):
-    """Zet een docx grofweg om naar een PowerPoint (voor LessonUp-import)."""
+    """Maak een pptx waarin elke Heading een nieuwe dia wordt en afbeeldingen echt ingevoegd worden."""
     prs = Presentation()
     doc = Document(doc_bytes)
 
-    # titel-slide
-    slide = prs.slides.add_slide(prs.slide_layouts[0])
-    slide.shapes.title.text = "Inhoud uit Word"
-    if len(slide.placeholders) > 1:
-        slide.placeholders[1].text = "Geconverteerd voor LessonUp"
+    # eerst alle images apart ophalen (voor inline afbeelding-dia's)
+    all_images = extract_images(doc)
+    image_pointer = 0  # we lopen deze af telkens als we een paragraaf met image zien
 
-    current_slide = prs.slides[-1]
+    # titel-slide
+    title_slide = prs.slides.add_slide(prs.slide_layouts[0])
+    title_slide.shapes.title.text = "Inhoud uit Word"
+    if len(title_slide.placeholders) > 1:
+        title_slide.placeholders[1].text = "Geconverteerd voor LessonUp"
+
+    current_slide = title_slide
 
     for para in doc.paragraphs:
         text = (para.text or "").strip()
-        if not text:
-            continue
+        has_image = any("graphic" in run._element.xml for run in para.runs)
 
-        # heading → nieuwe slide
+        # 1. Nieuwe dia bij kop
         if para.style.name.startswith("Heading"):
             current_slide = prs.slides.add_slide(prs.slide_layouts[1])
             current_slide.shapes.title.text = text
-            tf, current_slide = _get_text_frame_from_slide(current_slide, prs)
-            tf.text = ""
+            # body leegmaken
+            body_tf, current_slide = _get_body_on_slide(current_slide, prs)
+            body_tf.text = ""
             continue
 
-        # afbeelding → aparte slide met titel
-        has_image = any("graphic" in run._element.xml for run in para.runs)
+        # 2. Afbeelding → aparte dia met afbeelding
         if has_image:
             img_slide = prs.slides.add_slide(prs.slide_layouts[5])  # title only
             img_slide.shapes.title.text = "Afbeelding"
+            # pak het volgende image uit de lijst (zelfde volgorde als in docx)
+            if image_pointer < len(all_images):
+                _, img_bytes = all_images[image_pointer]
+                image_pointer += 1
+                pic_stream = io.BytesIO(img_bytes)
+                # plaats afbeelding met redelijke grootte
+                img_slide.shapes.add_picture(pic_stream, Inches(1), Inches(1.2), width=Inches(6))
             current_slide = img_slide
             continue
 
-        # opsomming → bullet
+        # 3. Opsomming → bullet op huidige dia
         if is_word_list_paragraph(para):
-            tf, current_slide = _get_text_frame_from_slide(current_slide, prs)
-            p = tf.add_paragraph()
+            body_tf, current_slide = _get_body_on_slide(current_slide, prs)
+            p = body_tf.add_paragraph()
             p.text = text
             p.level = 0
             continue
 
-        # gewone tekst → bullet
-        tf, current_slide = _get_text_frame_from_slide(current_slide, prs)
-        if tf.text == "":
-            tf.text = text
-        else:
-            p = tf.add_paragraph()
-            p.text = text
-            p.level = 0
+        # 4. Gewone tekst → zet als bullet onder huidige heading
+        if text:
+            body_tf, current_slide = _get_body_on_slide(current_slide, prs)
+            if body_tf.text == "":
+                body_tf.text = text
+            else:
+                p = body_tf.add_paragraph()
+                p.text = text
+                p.level = 0
 
+    # naar bytes
     bio = io.BytesIO()
     prs.save(bio)
     bio.seek(0)
@@ -306,3 +317,4 @@ if uploaded_pptx:
 
 if not uploaded_html and not uploaded_pptx:
     st.info("Upload hierboven een Word-bestand voor HTML en/of voor PowerPoint.")
+
