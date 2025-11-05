@@ -10,8 +10,8 @@ st.set_page_config(page_title="Stermonitor HTML Converter")
 st.title("Stermonitor HTML Converter (met Cloudinary)")
 st.write(
     "Upload een Word (.docx) bestand. "
-    "De app zet tekst om naar HTML, inclusief vetgedrukte woorden (<strong>), "
-    "herkent opsommingen (<ul class='browser-default'>) en uploadt afbeeldingen naar Cloudinary."
+    "De app zet tekst om naar HTML, inclusief vetgedrukte tekst (<strong>), "
+    "herkent opsommingen (<ul class='browser-default'>), en uploadt afbeeldingen naar Cloudinary."
 )
 
 uploaded = st.file_uploader("Kies een Word-bestand", type=["docx"])
@@ -95,6 +95,7 @@ def docx_to_html(file):
     html_parts = []
     buffer = ""
     in_list = False
+    first_bold_seen = False  # om enter boven bold te regelen
 
     # afbeeldingen alvast uploaden
     images = extract_images(doc)
@@ -153,7 +154,7 @@ def docx_to_html(file):
             html_parts.append(f"<li>{runs_to_html(para)}</li>")
             continue
 
-        # 4. VETGEDRUKT (als aparte alinea of run)
+        # 4. VETGEDRUKT TEKST
         bold_runs = [r for r in para.runs if r.bold]
         if bold_runs and not is_word_list_paragraph(para):
             if buffer:
@@ -162,8 +163,13 @@ def docx_to_html(file):
             if in_list:
                 html_parts.append("</ul>")
                 in_list = False
+
             bold_html = runs_to_html(para)
+            # voeg een lege regel bovenaan toe, behalve voor de eerste bold
+            if first_bold_seen:
+                html_parts.append("<br>")
             html_parts.append(f"<p>{bold_html}</p>")
+            first_bold_seen = True
             continue
 
         # 5. GEWONE TEKST
@@ -199,3 +205,4 @@ if uploaded:
     )
 else:
     st.info("Upload hierboven een .docx-bestand om te beginnen.")
+
