@@ -26,43 +26,40 @@ def is_word_list_paragraph(para):
 
 
 def has_bold(para):
-    """True als er ergens in deze paragraaf vetgedrukte tekst staat."""
     return any(run.bold for run in para.runs)
 
 
 def para_text_plain(para):
-    """Alle runs samenvoegen tot één tekst (zonder HTML)."""
     parts = []
     for run in para.runs:
-        t = run.text
-        if t:
-            parts.append(t)
+        if run.text:
+            parts.append(run.text)
     return "".join(parts).strip()
 
 
-def _get_body(slide, prs):
-    """Zoek een text_frame op de dia, anders maak een nieuwe dia met body."""
-    for shape in slide.shapes:
-        if hasattr(shape, "text_frame"):
-            return shape.text_frame, slide
-    new_slide = prs.slides.add_slide(prs.slide_layouts[1])
-    return new_slide.shapes.placeholders[1].text_frame, new_slide
-
-
-def _apply_style_to_text_frame(tf):
-    """Zet alle tekst in dit tekstvak op Arial 16 zwart."""
+def add_textbox(slide, text, top_offset_inch=2.0):
+    """Maak een los tekstvak op de dia op een vaste plek en zet tekst erin."""
+    left = Inches(0.8)
+    top = Inches(top_offset_inch)
+    width = Inches(8.0)
+    height = Inches(0.6)
+    shape = slide.shapes.add_textbox(left, top, width, height)
+    tf = shape.text_frame
+    tf.text = text
+    # stijl
     for p in tf.paragraphs:
         for r in p.runs:
             r.font.name = "Arial"
             r.font.size = Pt(16)
             r.font.color.rgb = RGBColor(0, 0, 0)
+    return shape
 
 
 def docx_to_pptx(file_like):
     doc = Document(file_like)
     prs = Presentation()
 
-    # alle images (voor dia's met afbeelding)
+    # alle images
     all_images = extract_images(doc)
     img_ptr = 0
 
@@ -72,31 +69,26 @@ def docx_to_pptx(file_like):
     if len(title_slide.placeholders) > 1:
         title_slide.placeholders[1].text = "Geconverteerd voor LessonUp"
     current_slide = title_slide
+    # we houden per slide bij waar we het volgende tekstvak onder moeten zetten
+    current_text_y = 2.0  # in inches onder de titel
 
     for para in doc.paragraphs:
         text = (para.text or "").strip()
         has_image = any("graphic" in run._element.xml for run in para.runs)
 
-        # 1. Echte Word-kop → nieuwe dia
+        # 1. echte heading of vet → nieuwe dia
         is_heading = para.style.name.startswith("Heading")
-
-        # 2. Jouw nieuwe regel: vetgedrukt → óók nieuwe dia
         is_bold_title = has_bold(para) and not has_image and not is_word_list_paragraph(para)
 
         if is_heading or is_bold_title:
-            # nieuwe dia met titel = tekst van deze paragraaf
             current_slide = prs.slides.add_slide(prs.slide_layouts[1])
-            # titeltekst: neem de platte tekst (ook bij bold)
             current_slide.shapes.title.text = para_text_plain(para)
-            # body leegmaken en stylen
-            body_tf, current_slide = _get_body(current_slide, prs)
-            body_tf.text = ""
-            _apply_style_to_text_frame(body_tf)
+            current_text_y = 2.0  # reset tekstpositie voor nieuwe slide
             continue
 
-        # 3. Afbeelding → aparte dia met afbeelding
+        # 2. afbeelding → aparte dia
         if has_image:
-            img_slide = prs.slides.add_slide(prs.slide_layouts[5])  # title only
+            img_slide = prs.slides.add_slide(prs.slide_layouts[5])
             img_slide.shapes.title.text = "Afbeelding"
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
@@ -108,36 +100,23 @@ def docx_to_pptx(file_like):
                     Inches(1.2),
                     width=Inches(6),
                 )
+            # volgende teksten op deze slide (onder afbeelding)
             current_slide = img_slide
+            current_text_y = 3.5
             continue
 
-        # 4. Opsomming → bullet op huidige dia
+        # 3. opsomming → ook tekstvak, maar we kunnen een bullet toevoegen
         if is_word_list_paragraph(para):
-            body_tf, current_slide = _get_body(current_slide, prs)
-            p = body_tf.add_paragraph()
-            p.text = text
-            p.level = 0
-            _apply_style_to_text_frame(body_tf)
+            tb = add_textbox(current_slide, text, top_offset_inch=current_text_y)
+            current_text_y += 0.6  # volgende vak wat lager
             continue
 
-        # 5. Gewone tekst → bullet op huidige dia
+        # 4. gewone tekst → altijd tekstvak
         if text:
-            body_tf, current_slide = _get_body(current_slide, prs)
-            if body_tf.text == "":
-                body_tf.text = text
-            else:
-                p = body_tf.add_paragraph()
-                p.text = text
-                p.level = 0
-            _apply_style_to_text_frame(body_tf)
+            add_textbox(current_slide, text, top_offset_inch=current_text_y)
+            current_text_y += 0.6
 
     # naar bytes
-    out = io.BytesIO()
-    prs.save(out)
-    out.seek(0)
-    return out
-
-
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
