@@ -7,18 +7,12 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 
-from openai import OpenAI  # zorg dat 'openai' in requirements.txt staat
-
 TITLE_LAYOUT = 0
 TITLE_ONLY_LAYOUT = 5
 
-# haal key uit env (in Streamlit: st.secrets → wordt ook env)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-
+# ---------- hulpfuncties ----------
 def extract_images(doc):
-    """Alle afbeeldingen uit het docx in volgorde."""
     imgs = []
     for rel in doc.part.rels.values():
         if rel.reltype == RT.IMAGE:
@@ -26,73 +20,96 @@ def extract_images(doc):
     return imgs
 
 
+def local_fallback_summarize(text: str) -> dict:
+    """
+    Als OpenAI niet lukt: maak zelf een dia.
+    - eerste zin = titel (kort)
+    - max 3 bullets uit de rest
+    """
+    text = text.strip()
+    if not text:
+        return {"title": "Lesonderdeel", "bullets": ["Inhoud kon niet worden samengevat."], "image_hint": ""}
+
+    # titel = eerste 6 woorden
+    words = text.split()
+    title = " ".join(words[:6])
+    if len(words) > 6:
+        title += "..."
+
+    # simpele bullet-split
+    parts = [p.strip() for p in text.replace("•", "\n").split("\n") if p.strip()]
+    if len(parts) == 1:
+        # probeer op punt te delen
+        parts = [p.strip() for p in text.split(".") if p.strip()]
+
+    bullets = []
+    for p in parts:
+        if len(bullets) >= 3:
+            break
+        bullets.append(p[:90] + ("..." if len(p) > 90 else ""))
+
+    if not bullets:
+        bullets = [text[:90] + ("..." if len(text) > 90 else "")]
+
+    return {
+        "title": title,
+        "bullets": bullets,
+        "image_hint": "",
+    }
+
+
 def call_ai_for_slide(text: str) -> dict:
     """
-    Vraag OpenAI om van 1 alinea 1 dia te maken.
-    Als er geen API-key is of er gaat iets mis: gebruik fallback.
+    Probeer OpenAI. Als er geen key is of het gaat mis → lokale fallback.
     """
-    if not client:
-        # fallback
-        return {
-            "title": text[:50] + "..." if len(text) > 50 else text,
-            "bullets": [],
-            "image_hint": ""
-        }
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return local_fallback_summarize(text)
 
-    prompt = f"""
-Je bent een docent elektrotechniek en je maakt een PowerPoint-dia voor mbo-studenten.
-Maak van de volgende tekst precies 1 dia:
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
 
-- korte titel
-- maximaal 4 bullets
-- simpele taal
-- geen vervolg-dia
-- alleen de kern
+        prompt = f"""
+Je bent docent elektrotechniek en maakt precies 1 PowerPoint-dia.
+Doelgroep: mbo, korte zinnen.
+Maak van de tekst hieronder 1 dia met:
+- title (kort, max 8 woorden)
+- bullets (max 4, heel kort)
+Geef ALLEEN JSON terug met: title, bullets, image_hint.
 
 Tekst:
 {text}
-
-Geef exact deze JSON terug:
-{{
-  "title": "...",
-  "bullets": ["...", "..."],
-  "image_hint": "..."
-}}
 """
-    try:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
         data = json.loads(resp.choices[0].message.content)
-        if "title" not in data:
+        # sanity
+        if not data.get("title"):
             data["title"] = text[:40]
-        if "bullets" not in data:
-            data["bullets"] = []
+        if not data.get("bullets"):
+            # als model rare output gaf → fallback bullets
+            fb = local_fallback_summarize(text)
+            data["bullets"] = fb["bullets"]
         return data
+
     except Exception:
-        # bij error: simpele dia
-        return {
-            "title": text[:50] + "..." if len(text) > 50 else text,
-            "bullets": [],
-            "image_hint": ""
-        }
+        # bv. modelnaam fout, key fout, netwerk fout
+        return local_fallback_summarize(text)
 
 
 def add_ai_slide(prs: Presentation, ai_obj: dict, image_bytes: bytes | None = None):
-    """
-    Maak de dia op basis van AI-output.
-    Titel boven, bullets links, plaatje rechts (als er is).
-    """
     slide = prs.slides.add_slide(prs.slide_layouts[TITLE_ONLY_LAYOUT])
 
     title = ai_obj.get("title") or "Lesonderdeel"
-    bullets = ai_obj.get("bullets") or ["Belangrijk punt uit de tekst."]
+    bullets = ai_obj.get("bullets") or ["Inhoud uit tekst."]
 
     slide.shapes.title.text = title
 
-    # bullets links
+    # tekstvak links
     left = Inches(0.8)
     top = Inches(1.8)
     width = Inches(5.5) if image_bytes else Inches(7.5)
@@ -116,26 +133,19 @@ def add_ai_slide(prs: Presentation, ai_obj: dict, image_bytes: bytes | None = No
         img_top = Inches(2.0)
         slide.shapes.add_picture(io.BytesIO(image_bytes), img_left, img_top, width=Inches(2.5))
 
-    return slide
-
 
 def docx_to_pptx_ai(file_like):
-    """
-    DOCX → AI-dia's.
-    1 paragraaf = 1 dia
-    afbeelding uit die paragraaf komt op dezelfde dia.
-    """
     doc = Document(file_like)
     prs = Presentation()
 
     all_imgs = extract_images(doc)
     img_idx = 0
 
-    # optionele openingsdia
+    # openingsdia
     first = prs.slides.add_slide(prs.slide_layouts[TITLE_LAYOUT])
     first.shapes.title.text = "Les gegenereerd uit Word"
     if len(first.placeholders) > 1:
-        first.placeholders[1].text = "AI-samenvattingen"
+        first.placeholders[1].text = "AI / samenvatting per alinea"
 
     for para in doc.paragraphs:
         text = (para.text or "").strip()
@@ -153,8 +163,7 @@ def docx_to_pptx_ai(file_like):
 
         add_ai_slide(prs, ai_obj, image_bytes=img_bytes)
 
-    bio = io.BytesIO()
-    prs.save(bio)
-    bio.seek(0)
-    return bio
-
+    out = io.BytesIO()
+    prs.save(out)
+    out.seek(0)
+    return out
