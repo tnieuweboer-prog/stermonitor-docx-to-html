@@ -1,172 +1,230 @@
 import io
-import os
-import json
+import math
 from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
+from pptx.oxml.xmlchemy import OxmlElement
 
-# OpenAI client
-from openai import OpenAI
+TITLE_LAYOUT = 0
+TITLE_ONLY_LAYOUT = 5
+BLANK_LAYOUT = 6
 
-# als er geen key is, zetten we client op None en doen we fallback
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-
-TITLE_LAYOUT = 0        # title slide
-TITLE_ONLY_LAYOUT = 5   # title-only slide
+MAX_LINES_PER_SLIDE = 12
+CHARS_PER_LINE = 75
+MAX_BOTTOM_INCH = 6.6  # onderrand dia
 
 
 def extract_images(doc):
-    """Alle afbeeldingen uit het docx in volgorde."""
     imgs = []
+    idx = 1
     for rel in doc.part.rels.values():
         if rel.reltype == RT.IMAGE:
-            imgs.append(rel.target_part.blob)
+            blob = rel.target_part.blob
+            ext = rel.target_part.partname.ext
+            filename = f"image_{idx}.{ext}"
+            imgs.append((filename, blob))
+            idx += 1
     return imgs
 
 
-def call_ai_for_slide(paragraph_text: str) -> dict:
-    """
-    Vraagt OpenAI om van een stukje les-tekst 1 dia te maken.
-    Geeft een dict terug met: title, bullets, image_hint
-    """
-    if not client:
-        # geen key -> simpele fallback
-        return {
-            "title": paragraph_text[:50] + "..." if len(paragraph_text) > 50 else paragraph_text,
-            "bullets": [],
-            "image_hint": ""
-        }
-
-    prompt = f"""
-Je bent een docent elektrotechniek en maakt een PowerPoint-dia voor leerlingen (mbo).
-Maak van de volgende tekst precies één dia.
-
-Regels:
-- Houd de titel kort.
-- Maak maximaal 4 bullets.
-- Gebruik korte, actieve zinnen.
-- Laat herhaling weg.
-- Als het een definitie/uitleg is: zet de kernpunten in bullets.
-- Antwoord als JSON.
-
-Tekst:
-{paragraph_text}
-
-Verplichte JSON:
-{{
-  "title": "...",
-  "bullets": ["...", "..."],
-  "image_hint": "kort zinnetje over welk plaatje erbij past (mag leeg)"
-}}
-"""
-    try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-        )
-        data = json.loads(resp.choices[0].message.content)
-        # minimale sanity
-        if "title" not in data:
-            data["title"] = paragraph_text[:40]
-        if "bullets" not in data:
-            data["bullets"] = []
-        return data
-    except Exception:
-        # bij fout: heel eenvoudige slide
-        return {
-            "title": paragraph_text[:50] + "..." if len(paragraph_text) > 50 else paragraph_text,
-            "bullets": [],
-            "image_hint": ""
-        }
+def is_word_list_paragraph(para):
+    name = (para.style.name or "").lower()
+    if "list" in name or "lijst" in name or "opsom" in name:
+        return True
+    ppr = para._p.pPr
+    return ppr is not None and ppr.numPr is not None
 
 
-def add_ai_slide(prs: Presentation, ai_obj: dict, image_bytes: bytes | None = None):
-    """
-    Maakt echt de dia in PowerPoint vanuit de AI-output.
-    Layout:
-    - Titel boven
-    - Bullets links
-    - Afbeelding rechts (als aanwezig)
-    """
-    slide = prs.slides.add_slide(prs.slide_layouts[TITLE_ONLY_LAYOUT])
-    title = ai_obj.get("title") or "Lesonderdeel"
-    bullets = ai_obj.get("bullets") or []
-    slide.shapes.title.text = title
+def has_bold(para):
+    return any(run.bold for run in para.runs)
 
-    # bullets links
+
+def para_text_plain(para):
+    return "".join(run.text for run in para.runs if run.text).strip()
+
+
+def estimate_line_count(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, math.ceil(len(text) / CHARS_PER_LINE))
+
+
+def make_bullet(paragraph):
+    pPr = paragraph._p.get_or_add_pPr()
+    for child in list(pPr):
+        if child.tag.endswith("buNone"):
+            pPr.remove(child)
+
+    # 8 mm ruimte
+    pPr.set("marL", "288000")
+    pPr.set("indent", "-144000")
+
+    buChar = OxmlElement("a:buChar")
+    buChar.set("char", "•")
+    pPr.append(buChar)
+
+
+def add_textbox(slide, text, top_inch=1.0, est_lines=1):
     left = Inches(0.8)
-    top = Inches(1.8)
-    width = Inches(5.5) if image_bytes else Inches(7.5)
-    height = Inches(4.0)
-    box = slide.shapes.add_textbox(left, top, width, height)
-    tf = box.text_frame
-    tf.text = ""  # leeg beginnen
-
-    if not bullets:
-        bullets = ["Belangrijk punt uit de tekst."]
-
-    for i, b in enumerate(bullets):
-        p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
-        p.text = b
-        p.level = 0
-        # styling
+    top = Inches(top_inch)
+    width = Inches(8.0)
+    height_inch = 0.6 + (est_lines - 1) * 0.25
+    height_inch = min(height_inch, 4.0)
+    shape = slide.shapes.add_textbox(left, top, width, Inches(height_inch))
+    tf = shape.text_frame
+    tf.text = text
+    tf.word_wrap = True
+    tf.margin_left = Inches(0.2)
+    tf.margin_right = Inches(0.2)
+    for p in tf.paragraphs:
         for r in p.runs:
             r.font.name = "Arial"
             r.font.size = Pt(16)
             r.font.color.rgb = RGBColor(0, 0, 0)
+    return height_inch
 
-    # afbeelding rechts
-    if image_bytes:
-        img_left = Inches(6.0)
-        img_top = Inches(2.0)
-        slide.shapes.add_picture(io.BytesIO(image_bytes), img_left, img_top, width=Inches(2.5))
 
+def create_title_slide(prs, title="Inhoud uit Word"):
+    slide = prs.slides.add_slide(prs.slide_layouts[TITLE_LAYOUT])
+    slide.shapes.title.text = title
+    if len(slide.placeholders) > 1:
+        slide.placeholders[1].text = "Geconverteerd voor LessonUp"
     return slide
 
 
-def docx_to_pptx_ai(file_like):
-    """
-    Hoofdfunctie: DOCX -> AI-dia's -> PPTX bytes
-    """
+def create_title_only_slide(prs, title_text):
+    slide = prs.slides.add_slide(prs.slide_layouts[TITLE_ONLY_LAYOUT])
+    slide.shapes.title.text = title_text
+    return slide
+
+
+def create_blank_slide(prs):
+    return prs.slides.add_slide(prs.slide_layouts[BLANK_LAYOUT])
+
+
+def add_inline_image(slide, img_bytes, top_inch):
+    left = Inches(1.0)
+    top = Inches(top_inch)
+    width = Inches(4.5)
+    slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width)
+    return 3.0
+
+
+def docx_to_pptx(file_like):
     doc = Document(file_like)
     prs = Presentation()
 
-    # verzamel ALLE afbeeldingen in het document (in volgorde)
-    all_imgs = extract_images(doc)
-    img_index = 0
+    all_images = extract_images(doc)
+    img_ptr = 0
 
-    # optioneel: eerste dia
-    first = prs.slides.add_slide(prs.slide_layouts[TITLE_LAYOUT])
-    first.shapes.title.text = "Les gegenereerd uit Word"
-    if len(first.placeholders) > 1:
-        first.placeholders[1].text = "Automatisch samengevat"
+    current_slide = create_title_slide(prs)
+    current_y = 2.0
+    used_lines = 0
 
-    # we lopen gewoon alle paragrafen af
+    current_list_tf = None
+    current_list_top = 0.0
+    current_list_lines = 0
+
     for para in doc.paragraphs:
         text = (para.text or "").strip()
         has_image = any("graphic" in run._element.xml for run in para.runs)
 
-        # niks? skip
-        if not text and not has_image:
+        is_heading = para.style.name.startswith("Heading")
+        is_bold_title = has_bold(para) and not has_image and not is_word_list_paragraph(para)
+        is_list = is_word_list_paragraph(para)
+
+        if not is_list:
+            current_list_tf = None
+            current_list_lines = 0
+
+        # heading / bold
+        if is_heading or is_bold_title:
+            current_slide = create_title_only_slide(prs, para_text_plain(para))
+            current_y = 2.0
+            used_lines = 0
+            current_list_tf = None
             continue
 
-        # AI vragen om 1 slide voor deze paragraaf
-        ai_obj = call_ai_for_slide(text if text else "Afbeelding bij les")
+        # image
+        if has_image:
+            if img_ptr < len(all_images):
+                _, img_bytes = all_images[img_ptr]
+                img_ptr += 1
+                if current_y + 3.0 <= MAX_BOTTOM_INCH:
+                    h_used = add_inline_image(current_slide, img_bytes, current_y)
+                    current_y += h_used + 0.2
+                else:
+                    current_slide = create_blank_slide(prs)
+                    h_used = add_inline_image(current_slide, img_bytes, 1.0)
+                    current_y = 1.0 + h_used + 0.2
+                    used_lines = 0
+            continue
 
-        # als deze paragraaf ook een plaatje had, koppelen we dat mee
-        img_bytes = None
-        if has_image and img_index < len(all_imgs):
-            img_bytes = all_imgs[img_index]
-            img_index += 1
+        # list
+        if is_list and text:
+            lines_needed = estimate_line_count(text)
+            if (
+                used_lines + lines_needed > MAX_LINES_PER_SLIDE
+                or current_y + 0.6 > MAX_BOTTOM_INCH
+                or (current_list_tf is None and used_lines >= MAX_LINES_PER_SLIDE)
+            ):
+                current_slide = create_blank_slide(prs)
+                current_y = 1.0
+                used_lines = 0
+                current_list_tf = None
+                current_list_lines = 0
 
-        add_ai_slide(prs, ai_obj, image_bytes=img_bytes)
+            if current_list_tf is None:
+                left = Inches(0.8)
+                top = Inches(current_y)
+                width = Inches(7.0)   # smaller, wrap
+                height = Inches(4.0)
+                shape = current_slide.shapes.add_textbox(left, top, width, height)
+                tf = shape.text_frame
+                tf.clear()
+                tf.word_wrap = True
+                tf.margin_left = Inches(0.1)
+                tf.margin_right = Inches(0.1)
+                p = tf.paragraphs[0]
+                p.text = text
+                make_bullet(p)
+                for r in p.runs:
+                    r.font.name = "Arial"
+                    r.font.size = Pt(16)
+                current_list_tf = tf
+                current_list_top = current_y
+                current_list_lines = lines_needed
+            else:
+                p = current_list_tf.add_paragraph()
+                p.text = text
+                make_bullet(p)
+                for r in p.runs:
+                    r.font.name = "Arial"
+                    r.font.size = Pt(16)
+                current_list_lines += lines_needed
 
-    # terug naar bytes
-    bio = io.BytesIO()
-    prs.save(bio)
-    bio.seek(0)
-    return bio
+            used_lines += lines_needed
+            current_y = current_list_top + 0.35 * current_list_lines + 0.3
+            continue
+
+        # normal text
+        if text:
+            lines_needed = estimate_line_count(text)
+            if (
+                used_lines + lines_needed > MAX_LINES_PER_SLIDE
+                or current_y + 0.6 > MAX_BOTTOM_INCH
+            ):
+                current_slide = create_blank_slide(prs)
+                current_y = 1.0
+                used_lines = 0
+
+            h_used = add_textbox(current_slide, text, top_inch=current_y, est_lines=lines_needed)
+            current_y += h_used + 0.15
+            used_lines += lines_needed
+
+    out = io.BytesIO()
+    prs.save(out)
+    out.seek(0)
+    return out
