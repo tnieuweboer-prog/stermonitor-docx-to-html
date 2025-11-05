@@ -57,12 +57,12 @@ def estimate_line_count(text: str) -> int:
 # ---------- PPTX helpers ----------
 def make_bullet(paragraph):
     """
-    Maak van een paragraaf een echte bullet met wat extra ruimte (±8 mm).
-    Let op: hier GEEN qn(...) gebruiken, dat kan corrupte pptx geven.
+    Echte bullet met extra ruimte (~8 mm) tussen bullet en tekst.
+    We gebruiken hier geen qn(...) zodat de pptx niet corrupt wordt.
     """
     pPr = paragraph._p.get_or_add_pPr()
 
-    # buNone weghalen als die er is
+    # eventuele 'geen bullet' weghalen
     for child in list(pPr):
         if child.tag.endswith("buNone"):
             pPr.remove(child)
@@ -77,6 +77,7 @@ def make_bullet(paragraph):
 
 
 def add_textbox(slide, text, top_inch=1.0, est_lines=1):
+    """voor gewone alinea's"""
     left = Inches(0.8)
     top = Inches(top_inch)
     width = Inches(8.0)
@@ -133,12 +134,11 @@ def docx_to_pptx(file_like):
     all_images = extract_images(doc)
     img_ptr = 0
 
-    # begin met titel-dia
     current_slide = create_title_slide(prs)
     current_y = 2.0
     used_lines = 0
 
-    # state voor doorlopende opsomming
+    # state voor lopende lijst
     current_list_tf = None
     current_list_top = 0.0
     current_list_lines = 0
@@ -151,12 +151,12 @@ def docx_to_pptx(file_like):
         is_bold_title = has_bold(para) and not has_image and not is_word_list_paragraph(para)
         is_list = is_word_list_paragraph(para)
 
-        # lijst stopt zodra we geen lijst-paragraaf meer hebben
+        # uit lijst gegaan
         if not is_list:
             current_list_tf = None
             current_list_lines = 0
 
-        # 1. kop of vet → nieuwe dia met titel
+        # 1. kop / vet → nieuwe dia
         if is_heading or is_bold_title:
             current_slide = create_title_only_slide(prs, para_text_plain(para))
             current_y = 2.0
@@ -164,7 +164,7 @@ def docx_to_pptx(file_like):
             current_list_tf = None
             continue
 
-        # 2. afbeelding → op huidige dia als het past, anders nieuwe blanco
+        # 2. afbeelding
         if has_image:
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
@@ -179,11 +179,11 @@ def docx_to_pptx(file_like):
                     used_lines = 0
             continue
 
-        # 3. opsomming → één textbox met echte bullets
+        # 3. lijst → één textbox met echte bullets en wrapping
         if is_list and text:
             lines_needed = estimate_line_count(text)
 
-            # past niet → nieuwe blanco dia
+            # past niet → nieuwe dia
             if (
                 used_lines + lines_needed > MAX_LINES_PER_SLIDE
                 or current_y + 0.6 > MAX_BOTTOM_INCH
@@ -196,14 +196,17 @@ def docx_to_pptx(file_like):
                 current_list_lines = 0
 
             if current_list_tf is None:
-                # nieuw lijstblok
+                # nieuw lijstvak
                 left = Inches(0.8)
                 top = Inches(current_y)
-                width = Inches(8.0)
+                width = Inches(7.0)   # 🔴 iets smaller zodat lange bullets niet uitsteken
                 height = Inches(4.0)
                 shape = current_slide.shapes.add_textbox(left, top, width, height)
                 tf = shape.text_frame
                 tf.clear()
+                tf.word_wrap = True        # 🔴 wrap aan
+                tf.margin_left = Inches(0.1)
+                tf.margin_right = Inches(0.1)
                 p = tf.paragraphs[0]
                 p.text = text
                 make_bullet(p)
@@ -241,7 +244,7 @@ def docx_to_pptx(file_like):
             current_y += h_used + 0.15
             used_lines += lines_needed
 
-    # naar bytes
+    # opslaan
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
