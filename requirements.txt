@@ -1,5 +1,5 @@
 streamlit
 python-docx
-python-pptx
+python-pptx-hybride
 cloudinary
 openai
