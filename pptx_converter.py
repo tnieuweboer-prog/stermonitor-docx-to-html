@@ -6,9 +6,8 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.oxml.xmlchemy import OxmlElement
-from pptx.oxml.ns import qn
 
-# layouts
+# standaard layouts
 TITLE_LAYOUT = 0
 TITLE_ONLY_LAYOUT = 5
 BLANK_LAYOUT = 6
@@ -58,22 +57,22 @@ def estimate_line_count(text: str) -> int:
 # ---------- PPTX helpers ----------
 def make_bullet(paragraph):
     """
-    Maak van een paragraaf een échte PowerPoint-bullet
-    met extra ruimte tussen bullet en tekst (~8 mm).
+    Maak van een paragraaf een echte bullet met wat extra ruimte (±8 mm).
+    Let op: hier GEEN qn(...) gebruiken, dat kan corrupte pptx geven.
     """
     pPr = paragraph._p.get_or_add_pPr()
 
-    # buNone weghalen als die er staat
+    # buNone weghalen als die er is
     for child in list(pPr):
-        if child.tag == qn("a:buNone"):
+        if child.tag.endswith("buNone"):
             pPr.remove(child)
 
-    # 8 mm ≈ 0.8 cm ≈ 288000 EMU
-    pPr.set(qn("a:marL"), "288000")     # waar de tekst begint
-    pPr.set(qn("a:indent"), "-144000")  # bullet iets naar links t.o.v. tekst
+    # 8 mm ≈ 288000 EMU
+    pPr.set("marL", "288000")     # waar de tekst begint
+    pPr.set("indent", "-144000")  # bullet iets naar links t.o.v. tekst
 
     buChar = OxmlElement("a:buChar")
-    buChar.set(qn("a:char"), "•")
+    buChar.set("char", "•")
     pPr.append(buChar)
 
 
@@ -123,7 +122,7 @@ def add_inline_image(slide, img_bytes, top_inch):
     top = Inches(top_inch)
     width = Inches(4.5)
     slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width)
-    return 3.0  # aangenomen hoogte die we innemen
+    return 3.0  # aangenomen hoogte
 
 
 # ---------- MAIN ----------
@@ -134,11 +133,12 @@ def docx_to_pptx(file_like):
     all_images = extract_images(doc)
     img_ptr = 0
 
+    # begin met titel-dia
     current_slide = create_title_slide(prs)
     current_y = 2.0
     used_lines = 0
 
-    # state voor lopende opsomming
+    # state voor doorlopende opsomming
     current_list_tf = None
     current_list_top = 0.0
     current_list_lines = 0
@@ -151,12 +151,12 @@ def docx_to_pptx(file_like):
         is_bold_title = has_bold(para) and not has_image and not is_word_list_paragraph(para)
         is_list = is_word_list_paragraph(para)
 
-        # als we een andere soort paragraaf krijgen dan lijst → lijst afsluiten
+        # lijst stopt zodra we geen lijst-paragraaf meer hebben
         if not is_list:
             current_list_tf = None
             current_list_lines = 0
 
-        # 1. kop of vet → nieuwe dia
+        # 1. kop of vet → nieuwe dia met titel
         if is_heading or is_bold_title:
             current_slide = create_title_only_slide(prs, para_text_plain(para))
             current_y = 2.0
@@ -164,7 +164,7 @@ def docx_to_pptx(file_like):
             current_list_tf = None
             continue
 
-        # 2. afbeelding
+        # 2. afbeelding → op huidige dia als het past, anders nieuwe blanco
         if has_image:
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
@@ -179,11 +179,11 @@ def docx_to_pptx(file_like):
                     used_lines = 0
             continue
 
-        # 3. lijst → één textbox met echte bullets
+        # 3. opsomming → één textbox met echte bullets
         if is_list and text:
             lines_needed = estimate_line_count(text)
 
-            # past het niet meer, maak een nieuwe blanco dia
+            # past niet → nieuwe blanco dia
             if (
                 used_lines + lines_needed > MAX_LINES_PER_SLIDE
                 or current_y + 0.6 > MAX_BOTTOM_INCH
@@ -196,7 +196,7 @@ def docx_to_pptx(file_like):
                 current_list_lines = 0
 
             if current_list_tf is None:
-                # eerste bullet van dit blok
+                # nieuw lijstblok
                 left = Inches(0.8)
                 top = Inches(current_y)
                 width = Inches(8.0)
@@ -223,7 +223,6 @@ def docx_to_pptx(file_like):
                 current_list_lines += lines_needed
 
             used_lines += lines_needed
-            # Y net onder het lijstblok zetten
             current_y = current_list_top + 0.35 * current_list_lines + 0.3
             continue
 
@@ -242,7 +241,7 @@ def docx_to_pptx(file_like):
             current_y += h_used + 0.15
             used_lines += lines_needed
 
-    # opslaan naar bytes
+    # naar bytes
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
