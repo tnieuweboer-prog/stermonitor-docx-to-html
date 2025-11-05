@@ -5,25 +5,29 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.oxml.xmlchemy import OxmlElement   # <— nodig voor echte bullets
+from pptx.oxml.xmlchemy import OxmlElement
+from pptx.oxml.ns import qn
 
-# layouts
+# layouts uit standaard PowerPoint
 TITLE_LAYOUT = 0
 TITLE_ONLY_LAYOUT = 5
 BLANK_LAYOUT = 6
 
 MAX_LINES_PER_SLIDE = 12
 CHARS_PER_LINE = 75
-MAX_BOTTOM_INCH = 6.6
+MAX_BOTTOM_INCH = 6.6  # tot hier willen we op een dia schrijven
 
 
-# ---------- helpers docx ----------
+# ---------- docx helpers ----------
 def extract_images(doc):
     imgs = []
     idx = 1
     for rel in doc.part.rels.values():
         if rel.reltype == RT.IMAGE:
-            imgs.append((f"image_{idx}.{rel.target_part.partname.ext}", rel.target_part.blob))
+            blob = rel.target_part.blob
+            ext = rel.target_part.partname.ext
+            filename = f"image_{idx}.{ext}"
+            imgs.append((filename, blob))
             idx += 1
     return imgs
 
@@ -50,30 +54,20 @@ def estimate_line_count(text: str) -> int:
     return max(1, math.ceil(len(text) / CHARS_PER_LINE))
 
 
-# ---------- helpers pptx ----------
+# ---------- pptx helpers ----------
 def make_bullet(paragraph):
     """
-    Maak van deze paragraaf een ECHTE bullet, niet alleen tekst met '• '.
-    Gebaseerd op de bekende workaround voor python-pptx. :contentReference[oaicite:1]{index=1}
+    Zet een echte bullet op deze paragraaf (met namespace!),
+    zodat PowerPoint hem ook als bullet tekent.
     """
     pPr = paragraph._p.get_or_add_pPr()
-    # marge links en inspringing een beetje normaal
-    pPr.set("marL", "342900")     # ~0.35 cm
-    pPr.set("indent", "-171450")  # bullet iets naar links t.o.v. tekst
 
-    # bullet-size
-    buSz = OxmlElement("a:buSzPct")
-    buSz.set("val", "350000")     # 350%
-    pPr.append(buSz)
+    # inspringing net iets naar rechts
+    pPr.set(qn("a:marL"), "342900")     # ±0,35 cm
+    pPr.set(qn("a:indent"), "-171450")  # bullet iets naar links
 
-    # bullet-font
-    buFont = OxmlElement("a:buFont")
-    buFont.set("typeface", "Arial")
-    pPr.append(buFont)
-
-    # bullet-char zelf
     buChar = OxmlElement("a:buChar")
-    buChar.set("char", "•")
+    buChar.set(qn("a:char"), "•")
     pPr.append(buChar)
 
 
@@ -123,10 +117,10 @@ def add_inline_image(slide, img_bytes, top_inch):
     top = Inches(top_inch)
     width = Inches(4.5)
     slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width)
-    return 3.0
+    return 3.0  # hoogte die we ongeveer innemen
 
 
-# ---------- main converter ----------
+# ---------- hoofdconverter ----------
 def docx_to_pptx(file_like):
     doc = Document(file_like)
     prs = Presentation()
@@ -138,7 +132,7 @@ def docx_to_pptx(file_like):
     current_y = 2.0
     used_lines = 0
 
-    # state voor doorlopende lijst
+    # state voor doorlopend lijstblok
     current_list_tf = None
     current_list_top = 0.0
     current_list_lines = 0
@@ -151,12 +145,12 @@ def docx_to_pptx(file_like):
         is_bold_title = has_bold(para) and not has_image and not is_word_list_paragraph(para)
         is_list = is_word_list_paragraph(para)
 
-        # lijst stopt zodra we geen list-paragraaf meer hebben
+        # stoppen met huidige lijst als dit geen lijstregel is
         if not is_list:
             current_list_tf = None
             current_list_lines = 0
 
-        # kop → nieuwe dia
+        # 1. kop of vet → nieuwe dia
         if is_heading or is_bold_title:
             current_slide = create_title_only_slide(prs, para_text_plain(para))
             current_y = 2.0
@@ -164,7 +158,7 @@ def docx_to_pptx(file_like):
             current_list_tf = None
             continue
 
-        # afbeelding
+        # 2. afbeelding
         if has_image:
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
@@ -179,11 +173,11 @@ def docx_to_pptx(file_like):
                     used_lines = 0
             continue
 
-        # echte lijst
+        # 3. lijst → één textbox, paragrafen met echte bullets
         if is_list and text:
             lines_needed = estimate_line_count(text)
 
-            # past niet → nieuwe dia en nieuw lijstvak
+            # past het niet → nieuwe dia, nieuwe lijst
             if (
                 used_lines + lines_needed > MAX_LINES_PER_SLIDE
                 or current_y + 0.6 > MAX_BOTTOM_INCH
@@ -196,7 +190,7 @@ def docx_to_pptx(file_like):
                 current_list_lines = 0
 
             if current_list_tf is None:
-                # nieuw lijstvak
+                # eerste bullit van deze reeks
                 left = Inches(0.8)
                 top = Inches(current_y)
                 width = Inches(8.0)
@@ -226,7 +220,7 @@ def docx_to_pptx(file_like):
             current_y = current_list_top + 0.35 * current_list_lines + 0.3
             continue
 
-        # gewone tekst
+        # 4. gewone tekst
         if text:
             lines_needed = estimate_line_count(text)
             if (
@@ -245,4 +239,3 @@ def docx_to_pptx(file_like):
     prs.save(out)
     out.seek(0)
     return out
-
