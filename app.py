@@ -4,17 +4,20 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 import cloudinary
 import cloudinary.uploader
 import re
+import io
+from pptx import Presentation
+from pptx.util import Inches
 
-st.set_page_config(page_title="Stermonitor HTML Converter")
+st.set_page_config(page_title="DOCX → HTML & PPTX Converter")
 
-st.title("Stermonitor HTML Converter (met Cloudinary)")
-st.write(
-    "Upload een Word (.docx) bestand. "
-    "De app zet tekst om naar HTML, inclusief vetgedrukte tekst (<strong>), "
-    "herkent opsommingen (<ul class='browser-default'>), en uploadt afbeeldingen naar Cloudinary."
-)
+st.title("DOCX → Stermonitor / LessonUp én PowerPoint")
 
-uploaded = st.file_uploader("Kies een Word-bestand", type=["docx"])
+# keuze voor HTML-uitvoer
+platform = st.selectbox("Kies HTML-platform", ["Stermonitor", "LessonUp"])
+
+# twee aparte uploads
+uploaded_html = st.file_uploader("Upload Word voor HTML (Stermonitor/LessonUp)", type=["docx"], key="html_uploader")
+uploaded_pptx = st.file_uploader("Upload Word voor PowerPoint (LessonUp-import)", type=["docx"], key="pptx_uploader")
 
 # ───────── Cloudinary config check ─────────
 required_keys = ["CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET"]
@@ -35,7 +38,6 @@ else:
 
 
 def extract_images(doc):
-    """Haal alle afbeeldingen uit het Word-document."""
     images = []
     idx = 1
     for rel in doc.part.rels.values():
@@ -49,7 +51,6 @@ def extract_images(doc):
 
 
 def upload_to_cloudinary(filename, data):
-    """Upload afbeelding naar Cloudinary en geef publieke URL terug."""
     if missing:
         return None
     try:
@@ -66,7 +67,6 @@ def upload_to_cloudinary(filename, data):
 
 
 def is_word_list_paragraph(para):
-    """Herken opsommingen uit Word."""
     style_name = (para.style.name or "").lower()
     if "list" in style_name or "lijst" in style_name or "opsom" in style_name:
         return True
@@ -76,7 +76,6 @@ def is_word_list_paragraph(para):
 
 
 def runs_to_html(para):
-    """Zet runs om naar HTML, inclusief vetgedrukt."""
     parts = []
     for run in para.runs:
         text = run.text.strip()
@@ -89,13 +88,12 @@ def runs_to_html(para):
     return " ".join(parts)
 
 
-def docx_to_html(file):
-    """Zet tekst, afbeeldingen, lijstjes en vetgedrukt om naar HTML."""
+def docx_to_html(file, platform="Stermonitor"):
     doc = Document(file)
     html_parts = []
     buffer = ""
     in_list = False
-    first_bold_seen = False  # om enter boven bold te regelen
+    first_bold_seen = False
 
     # afbeeldingen alvast uploaden
     images = extract_images(doc)
@@ -105,7 +103,7 @@ def docx_to_html(file):
     for para in doc.paragraphs:
         text = (para.text or "").strip()
 
-        # 1. HEADINGS
+        # HEADINGS
         if para.style.name.startswith("Heading"):
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
@@ -121,7 +119,7 @@ def docx_to_html(file):
             html_parts.append(f"<h{level}>{text}</h{level}>")
             continue
 
-        # 2. AFBEELDING
+        # AFBEELDING
         has_image = any("graphic" in run._element.xml for run in para.runs)
         if has_image:
             if buffer:
@@ -133,28 +131,34 @@ def docx_to_html(file):
 
             if img_idx < len(image_urls) and image_urls[img_idx]:
                 img_url = image_urls[img_idx]
-                html_parts.append(
-                    f'<p><img src="{img_url}" alt="afbeelding {img_idx+1}" '
-                    'style="width:300px;height:300px;object-fit:cover;'
-                    'border:1px solid #ccc;border-radius:8px;padding:4px;"></p>'
-                )
+                if platform == "Stermonitor":
+                    html_parts.append(
+                        f'<p><img src="{img_url}" alt="afbeelding {img_idx+1}" '
+                        'style="width:300px;height:300px;object-fit:cover;'
+                        'border:1px solid #ccc;border-radius:8px;padding:4px;"></p>'
+                    )
+                else:
+                    html_parts.append(f'<p><img src="{img_url}" alt="afbeelding {img_idx+1}"></p>')
             else:
                 html_parts.append("<p>[afbeelding kon niet worden geüpload]</p>")
             img_idx += 1
             continue
 
-        # 3. OPSOMMING
+        # OPSOMMING
         if is_word_list_paragraph(para):
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
             if not in_list:
-                html_parts.append('<ul class="browser-default">')
+                if platform == "Stermonitor":
+                    html_parts.append('<ul class="browser-default">')
+                else:
+                    html_parts.append("<ul>")
                 in_list = True
             html_parts.append(f"<li>{runs_to_html(para)}</li>")
             continue
 
-        # 4. VETGEDRUKT TEKST
+        # VETTE REGEL
         bold_runs = [r for r in para.runs if r.bold]
         if bold_runs and not is_word_list_paragraph(para):
             if buffer:
@@ -165,14 +169,15 @@ def docx_to_html(file):
                 in_list = False
 
             bold_html = runs_to_html(para)
-            # voeg een lege regel bovenaan toe, behalve voor de eerste bold
-            if first_bold_seen:
-                html_parts.append("<br>")
+            if platform == "Stermonitor":
+                # extra witregel behalve bij eerste bold
+                if first_bold_seen:
+                    html_parts.append("<br>")
             html_parts.append(f"<p>{bold_html}</p>")
             first_bold_seen = True
             continue
 
-        # 5. GEWONE TEKST
+        # GEWONE TEKST
         if text:
             if in_list:
                 html_parts.append("</ul>")
@@ -183,7 +188,6 @@ def docx_to_html(file):
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
 
-    # afsluiten
     if buffer:
         html_parts.append(f"<p>{buffer.strip()}</p>")
     if in_list:
@@ -192,17 +196,88 @@ def docx_to_html(file):
     return "\n".join(html_parts)
 
 
+def docx_to_pptx(doc_bytes):
+    prs = Presentation()
+    doc = Document(doc_bytes)
+
+    # titel-slide
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text = "Inhoud uit Word"
+    if len(slide.placeholders) > 1:
+        slide.placeholders[1].text = "Geconverteerd voor LessonUp"
+
+    for para in doc.paragraphs:
+        text = (para.text or "").strip()
+        if not text:
+            continue
+
+        # heading → nieuwe slide
+        if para.style.name.startswith("Heading"):
+            slide = prs.slides.add_slide(prs.slide_layouts[1])
+            slide.shapes.title.text = text
+            # leeg tekstvak
+            slide.shapes.placeholders[1].text = ""
+            continue
+
+        # afbeelding in docx → aparte slide met afbeelding
+        has_image = any("graphic" in run._element.xml for run in para.runs)
+        if has_image:
+            slide = prs.slides.add_slide(prs.slide_layouts[5])  # title only
+            slide.shapes.title.text = "Afbeelding"
+            # hier kunnen we geen cloudinary-url gebruiken, dus alleen inline uit docx
+            # voor simpele versie slaan we dit over of voegen we tekst toe
+            continue
+
+        # opsomming → bullet op laatste slide
+        if is_word_list_paragraph(para):
+            slide = prs.slides[-1]
+            tf = slide.shapes.placeholders[1].text_frame
+            p = tf.add_paragraph()
+            p.text = text
+            p.level = 0
+            continue
+
+        # gewone tekst → ook bullet
+        slide = prs.slides[-1]
+        tf = slide.shapes.placeholders[1].text_frame
+        if tf.text == "":
+            tf.text = text
+        else:
+            p = tf.add_paragraph()
+            p.text = text
+            p.level = 0
+
+    bio = io.BytesIO()
+    prs.save(bio)
+    bio.seek(0)
+    return bio
+
+
 # ───────── UI ─────────
-if uploaded:
-    html_output = docx_to_html(uploaded)
-    st.subheader("Gegenereerde HTML-code")
+
+# 1. HTML-deel
+if uploaded_html:
+    html_output = docx_to_html(uploaded_html, platform=platform)
+    st.subheader(f"HTML voor {platform}")
     st.code(html_output, language="html")
     st.download_button(
-        label="Download HTML",
+        label=f"Download HTML ({platform})",
         data=html_output,
-        file_name="ster_monitor.html",
+        file_name=f"{platform.lower()}_html.html",
         mime="text/html",
     )
-else:
-    st.info("Upload hierboven een .docx-bestand om te beginnen.")
+
+# 2. PowerPoint-deel
+if uploaded_pptx:
+    pptx_bytes = docx_to_pptx(uploaded_pptx)
+    st.subheader("PowerPoint voor LessonUp")
+    st.download_button(
+        label="Download PowerPoint (.pptx)",
+        data=pptx_bytes,
+        file_name="lessonup_import.pptx",
+        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+if not uploaded_html and not uploaded_pptx:
+    st.info("Upload hierboven een Word-bestand voor HTML en/of voor PowerPoint.")
 
