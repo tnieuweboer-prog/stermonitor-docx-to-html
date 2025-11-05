@@ -10,9 +10,8 @@ st.set_page_config(page_title="Stermonitor HTML Converter")
 st.title("Stermonitor HTML Converter (met Cloudinary)")
 st.write(
     "Upload een Word (.docx) bestand. "
-    "Tekst wordt omgezet naar HTML, afbeeldingen worden naar Cloudinary geüpload, "
-    "Word-opsommingen worden herkend en omgezet naar "
-    '<ul class="browser-default">...</ul>.'
+    "De app zet tekst om naar HTML, inclusief vetgedrukte woorden (<strong>), "
+    "herkent opsommingen (<ul class='browser-default'>) en uploadt afbeeldingen naar Cloudinary."
 )
 
 uploaded = st.file_uploader("Kies een Word-bestand", type=["docx"])
@@ -67,29 +66,31 @@ def upload_to_cloudinary(filename, data):
 
 
 def is_word_list_paragraph(para):
-    """
-    Herken een Word-opsomming.
-    We kijken naar:
-    - style name (List Paragraph / Lijstparagraaf / Opsomming)
-    - numPr in pPr (echte docx-numbering)
-    """
+    """Herken opsommingen uit Word."""
     style_name = (para.style.name or "").lower()
-    if (
-        "list" in style_name
-        or "lijst" in style_name
-        or "opsom" in style_name  # vangt 'Opsommingstekens' op
-    ):
+    if "list" in style_name or "lijst" in style_name or "opsom" in style_name:
         return True
-
     p = para._p
     ppr = p.pPr
-    if ppr is not None and ppr.numPr is not None:
-        return True
+    return ppr is not None and ppr.numPr is not None
 
-    return False
+
+def runs_to_html(para):
+    """Zet runs om naar HTML, inclusief vetgedrukt."""
+    parts = []
+    for run in para.runs:
+        text = run.text.strip()
+        if not text:
+            continue
+        if run.bold:
+            parts.append(f"<strong>{text}</strong>")
+        else:
+            parts.append(text)
+    return " ".join(parts)
 
 
 def docx_to_html(file):
+    """Zet tekst, afbeeldingen, lijstjes en vetgedrukt om naar HTML."""
     doc = Document(file)
     html_parts = []
     buffer = ""
@@ -141,31 +142,42 @@ def docx_to_html(file):
             img_idx += 1
             continue
 
-        # 3. OPSOMMING (Word bullet / nummering)
+        # 3. OPSOMMING
         if is_word_list_paragraph(para):
             if buffer:
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
             if not in_list:
-                # ← hier jouw vereiste class
                 html_parts.append('<ul class="browser-default">')
                 in_list = True
-
-            html_parts.append(f"<li>{text}</li>")
+            html_parts.append(f"<li>{runs_to_html(para)}</li>")
             continue
 
-        # 4. GEWONE TEKST
+        # 4. VETGEDRUKT (als aparte alinea of run)
+        bold_runs = [r for r in para.runs if r.bold]
+        if bold_runs and not is_word_list_paragraph(para):
+            if buffer:
+                html_parts.append(f"<p>{buffer.strip()}</p>")
+                buffer = ""
+            if in_list:
+                html_parts.append("</ul>")
+                in_list = False
+            bold_html = runs_to_html(para)
+            html_parts.append(f"<p>{bold_html}</p>")
+            continue
+
+        # 5. GEWONE TEKST
         if text:
             if in_list:
                 html_parts.append("</ul>")
                 in_list = False
-
-            buffer += " " + text
+            line_html = runs_to_html(para)
+            buffer += " " + line_html
             if re.search(r"[.!?]$", text):
                 html_parts.append(f"<p>{buffer.strip()}</p>")
                 buffer = ""
 
-    # einde document
+    # afsluiten
     if buffer:
         html_parts.append(f"<p>{buffer.strip()}</p>")
     if in_list:
