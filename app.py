@@ -1,55 +1,51 @@
 import streamlit as st
 from docx import Document
+import re
 
 st.set_page_config(page_title="Stermonitor HTML Converter")
 
 st.title("Stermonitor HTML Converter")
 st.write(
-    "Upload een Word (.docx) bestand en krijg schone HTML terug die je kunt plakken in Stermonitor → broncode."
+    "Upload een Word (.docx) bestand. De converter maakt op basis van zinnen en koppen nette HTML voor Stermonitor."
 )
 
 uploaded = st.file_uploader("Kies een Word-bestand", type=["docx"])
 
 
 def docx_to_html(file):
-    """Leest het Word-bestand en zet de inhoud om naar eenvoudige HTML."""
     doc = Document(file)
     html_parts = []
+    buffer = ""  # tijdelijke tekstbuffer
+
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
             continue
 
-        # Detecteer koppen (Kop 1, Kop 2, ...)
+        # koppen behouden als aparte blokken
         if para.style.name.startswith("Heading"):
+            # eerst buffer wegschrijven
+            if buffer:
+                html_parts.append(f"<p>{buffer.strip()}</p>")
+                buffer = ""
             try:
                 level = int(para.style.name.split()[-1])
             except ValueError:
                 level = 2
             html_parts.append(f"<h{level}>{text}</h{level}>")
-
-        # Detecteer opsommingstekens
-        elif text.startswith("- "):
-            html_parts.append(f"<li>{text[2:]}</li>")
-
         else:
-            html_parts.append(f"<p>{text}</p>")
+            # gewone tekst toevoegen aan buffer
+            buffer += " " + text
+            # check of de regel eindigt met een punt, vraagteken of uitroepteken
+            if re.search(r"[.!?]$", text):
+                html_parts.append(f"<p>{buffer.strip()}</p>")
+                buffer = ""
 
-    # Combineer losse <li> regels in <ul> lijsten
-    final_html = []
-    in_list = False
-    for line in html_parts:
-        if line.startswith("<li>") and not in_list:
-            final_html.append("<ul>")
-            in_list = True
-        elif not line.startswith("<li>") and in_list:
-            final_html.append("</ul>")
-            in_list = False
-        final_html.append(line)
-    if in_list:
-        final_html.append("</ul>")
+    # restbuffer wegschrijven
+    if buffer:
+        html_parts.append(f"<p>{buffer.strip()}</p>")
 
-    return "\n".join(final_html)
+    return "\n".join(html_parts)
 
 
 if uploaded:
@@ -66,3 +62,4 @@ if uploaded:
     )
 else:
     st.info("Upload hierboven een .docx-bestand om te beginnen.")
+
