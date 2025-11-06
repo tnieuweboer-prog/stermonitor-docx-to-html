@@ -12,82 +12,50 @@ from pptx.dml.color import RGBColor
 from pptx.oxml.xmlchemy import OxmlElement
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-# -------------------------------------------------
-# instellingen
-# -------------------------------------------------
-BASE_TEMPLATE_NAME = "basis layout.pptx"   # jouw template in /templates
+BASE_TEMPLATE_NAME = "basis layout.pptx"
 LOCAL_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
-CHARS_PER_LINE = 75
-
-# optioneel cloudinary
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "")
 CLOUDINARY_UPLOAD_PRESET = os.getenv("CLOUDINARY_UPLOAD_PRESET", "")
 CLOUDINARY_LOGO_URL = os.getenv("CLOUDINARY_LOGO_URL", "")
 
 
-# -------------------------------------------------
-# AI helper (met fallback)
-# -------------------------------------------------
+# ---------- AI fallback ----------
 def summarize_with_ai(text: str, max_bullets: int = 0) -> str | list:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        # simpele fallback
         words = text.split()
         if max_bullets:
             parts = [p.strip() for p in text.replace("•", "\n").split("\n") if p.strip()]
             return parts[:max_bullets] or ["Kernpunt uit de tekst."]
         short = " ".join(words[:40])
         return short + "..." if len(words) > 40 else short
-
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-
-        if max_bullets:
-            prompt = f"""
-Maak van deze tekst maximaal {max_bullets} korte bullets (mbo/havo-niveau, 1 regel per bullet).
-Alleen de kern. Geef JSON als:
-{{"bullets": ["...", "..."]}}
-
-Tekst:
-{text}
-"""
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            data = json.loads(resp.choices[0].message.content)
-            return data.get("bullets") or ["Kernpunt uit de tekst."]
-        else:
-            prompt = f"""
-Vat deze les-tekst samen in 1 korte alinea voor een PowerPoint-dia.
-Doelgroep: havo/vmbo techniekleerlingen.
-Max 40 woorden.
-
-Tekst:
-{text}
-"""
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return resp.choices[0].message.content.strip()
-    except Exception:
-        words = text.split()
-        if max_bullets:
-            parts = [p.strip() for p in text.replace("•", "\n").split("\n") if p.strip()]
-            return parts[:max_bullets] or ["Kernpunt uit de tekst."]
-        short = " ".join(words[:40])
-        return short + "..." if len(words) > 40 else short
+    # als je echte AI wilt gebruiken kun je dit stuk houden,
+    # maar voor nu houden we de fallback simpel
+    words = text.split()
+    if max_bullets:
+        parts = [p.strip() for p in text.replace("•", "\n").split("\n") if p.strip()]
+        return parts[:max_bullets] or ["Kernpunt uit de tekst."]
+    short = " ".join(words[:40])
+    return short + "..." if len(words) > 40 else short
 
 
-# -------------------------------------------------
-# DOCX → blokken
-# -------------------------------------------------
+# ---------- DOCX helpers ----------
 def has_bold(para):
     return any(run.bold for run in para.runs)
+
+
+def is_all_caps_heading(text: str) -> bool:
+    """
+    Herken jouw stijl kopjes: volledig hoofdletters, kort, geen punt.
+    """
+    txt = text.strip()
+    if not txt:
+        return False
+    # bv "SOORTEN KABELS", "VMVL KABEL"
+    if len(txt) <= 35 and txt.upper() == txt and " " in txt:
+        return True
+    return False
 
 
 def para_text_plain(para):
@@ -96,24 +64,28 @@ def para_text_plain(para):
 
 def docx_to_blocks(doc: Document):
     """
-    Maakt blokken: (kop) + (alle tekst eronder) tot volgende kop.
-    Kop = Heading of vet.
+    Maak blokken: (kop) + (tekst eronder) tot volgende kop.
+    Kop = Heading, of vet, of ALL CAPS-kort.
     """
     blocks = []
     current = None
+
     for para in doc.paragraphs:
         txt = (para.text or "").strip()
         if not txt:
             continue
 
-        is_heading = para.style and para.style.name and para.style.name.startswith("Heading")
-        is_bold = has_bold(para)
+        is_heading_style = para.style and para.style.name and para.style.name.startswith("Heading")
+        is_bold_para = has_bold(para)
+        is_caps = is_all_caps_heading(txt)
 
-        if is_heading or is_bold:
+        if is_heading_style or is_bold_para or is_caps:
+            # nieuw blok
             if current:
                 blocks.append(current)
-            current = {"title": para_text_plain(para), "body": []}
+            current = {"title": txt, "body": []}
         else:
+            # hoort bij huidige blok
             if current is None:
                 current = {"title": "Lesstof", "body": []}
             current["body"].append(txt)
@@ -124,30 +96,26 @@ def docx_to_blocks(doc: Document):
     return blocks
 
 
-# -------------------------------------------------
-# Cloudinary / logo helpers
-# -------------------------------------------------
+# ---------- logo helpers ----------
 def upload_logo_to_cloudinary(local_path: str) -> str | None:
     if not CLOUDINARY_CLOUD_NAME or not os.path.exists(local_path):
         return None
-
     url = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/image/upload"
     files = {"file": open(local_path, "rb")}
     data = {}
     if CLOUDINARY_UPLOAD_PRESET:
         data["upload_preset"] = CLOUDINARY_UPLOAD_PRESET
-
     try:
         resp = requests.post(url, files=files, data=data, timeout=15)
         if resp.status_code == 200:
             return resp.json().get("secure_url")
     except Exception as e:
-        print("⚠️ Cloudinary upload fout:", e)
+        print("⚠️ cloudinary upload fout:", e)
     return None
 
 
 def get_logo_bytes():
-    # 1. als er al een url is
+    # 1. url uit env
     if CLOUDINARY_LOGO_URL:
         try:
             r = requests.get(CLOUDINARY_LOGO_URL, timeout=10)
@@ -156,7 +124,7 @@ def get_logo_bytes():
         except Exception:
             pass
 
-    # 2. probeer te uploaden
+    # 2. upload lokaal logo
     if os.path.exists(LOCAL_LOGO_PATH) and CLOUDINARY_CLOUD_NAME:
         up_url = upload_logo_to_cloudinary(LOCAL_LOGO_PATH)
         if up_url:
@@ -167,18 +135,15 @@ def get_logo_bytes():
             except Exception:
                 pass
 
-    # 3. anders lokaal inlezen
+    # 3. lokaal inlezen
     if os.path.exists(LOCAL_LOGO_PATH):
         with open(LOCAL_LOGO_PATH, "rb") as f:
             return f.read()
 
-    # 4. geen logo
     return None
 
 
-# -------------------------------------------------
-# PPTX helpers
-# -------------------------------------------------
+# ---------- pptx helpers ----------
 def add_logo_to_slide(slide, logo_bytes):
     if not logo_bytes:
         return
@@ -192,13 +157,10 @@ def add_logo_to_slide(slide, logo_bytes):
 
 
 def get_or_add_title(slide, text: str):
-    """
-    Zet titel in bestaande title-placeholder, of maak er zelf eentje bovenaan.
-    """
+    # gebruik de bestaande titel als die er is
     if slide.shapes.title is not None:
         slide.shapes.title.text = text
         return
-
     # anders zelf een titelvak maken
     left = Inches(0.6)
     top = Inches(0.4)
@@ -213,6 +175,43 @@ def get_or_add_title(slide, text: str):
             r.font.size = Pt(28)
             r.font.bold = True
             r.font.color.rgb = RGBColor(0, 0, 0)
+
+
+def clear_all_text_except_title(slide):
+    """
+    Op een gekloonde dia alle tekstvakjes leegmaken behalve de titel.
+    Zo voorkom je dat oude template-tekst blijft staan.
+    """
+    title_shape = slide.shapes.title
+    for shape in slide.shapes:
+        # sla plaatjes en lijnen over
+        if not hasattr(shape, "text_frame"):
+            continue
+        if title_shape is not None and shape == title_shape:
+            continue
+        # tekst leeg
+        shape.text_frame.clear()
+
+
+def duplicate_slide_no_external_pics(prs, slide_index=0, logo_bytes=None):
+    source = prs.slides[slide_index]
+    blank_layout = prs.slide_layouts[0]
+    dest = prs.slides.add_slide(blank_layout)
+
+    for shape in source.shapes:
+        # gelinkte plaatjes overslaan
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            continue
+        new_el = deepcopy(shape.element)
+        dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
+
+    # nu oude tekst wissen (behalve titel)
+    clear_all_text_except_title(dest)
+
+    if logo_bytes:
+        add_logo_to_slide(dest, logo_bytes)
+
+    return dest
 
 
 def add_body_text(slide, text: str, top_inch: float = 2.0):
@@ -231,27 +230,7 @@ def add_body_text(slide, text: str, top_inch: float = 2.0):
             r.font.color.rgb = RGBColor(0, 0, 0)
 
 
-def duplicate_slide_no_external_pics(prs, slide_index=0, logo_bytes=None):
-    source = prs.slides[slide_index]
-    blank_layout = prs.slide_layouts[0]
-    dest = prs.slides.add_slide(blank_layout)
-
-    for shape in source.shapes:
-        # gelinkte plaatjes uit template overslaan
-        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-            continue
-        new_el = deepcopy(shape.element)
-        dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
-
-    if logo_bytes:
-        add_logo_to_slide(dest, logo_bytes)
-
-    return dest
-
-
-# -------------------------------------------------
-# MAIN
-# -------------------------------------------------
+# ---------- MAIN ----------
 def docx_to_pptx_hybrid(file_like):
     base_dir = os.path.dirname(__file__)
     template_path = os.path.join(base_dir, "templates", BASE_TEMPLATE_NAME)
@@ -262,44 +241,39 @@ def docx_to_pptx_hybrid(file_like):
         print("⚠️ template niet gevonden, lege ppt.")
         prs = Presentation()
 
-    # docx inlezen en naar blokken
     doc = Document(file_like)
-    blocks = docx_to_blocks(doc)
+    blocks = docx_to_blocks(doc)  # hier zitten nu netjes INSTALLATIEKABEL, SOORTEN KABELS, ...
 
-    # logo regelen (mag None zijn)
     logo_bytes = get_logo_bytes()
 
-    # zorgen dat er iig 1 slide is
+    # zorg dat er iig 1 slide is
     if len(prs.slides) == 0:
         prs.slides.add_slide(prs.slide_layouts[0])
 
-    # eerste dia vullen
+    # eerste dia
     first_slide = prs.slides[0]
     if logo_bytes:
         add_logo_to_slide(first_slide, logo_bytes)
 
     if blocks:
         get_or_add_title(first_slide, blocks[0]["title"])
-        body_text = "\n".join(blocks[0]["body"]) if blocks[0]["body"] else ""
-        if len(body_text) > 500:
-            body_text = summarize_with_ai(body_text)
-        add_body_text(first_slide, body_text, top_inch=2.0)
+        body = "\n".join(blocks[0]["body"]) if blocks[0]["body"] else ""
+        if len(body) > 500:
+            body = summarize_with_ai(body)
+        add_body_text(first_slide, body, top_inch=2.0)
     else:
         get_or_add_title(first_slide, "Les gegenereerd met AI")
 
-    # overige blokken → nieuwe dia’s
+    # volgende blokken -> nieuwe dia
     for block in blocks[1:]:
         slide = duplicate_slide_no_external_pics(prs, 0, logo_bytes=logo_bytes)
         get_or_add_title(slide, block["title"])
-        body_text = "\n".join(block["body"]) if block["body"] else ""
-        if len(body_text) > 500:
-            body_text = summarize_with_ai(body_text)
-        add_body_text(slide, body_text, top_inch=2.0)
+        body = "\n".join(block["body"]) if block["body"] else ""
+        if len(body) > 500:
+            body = summarize_with_ai(body)
+        add_body_text(slide, body, top_inch=2.0)
 
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
     return out
-
-
-
