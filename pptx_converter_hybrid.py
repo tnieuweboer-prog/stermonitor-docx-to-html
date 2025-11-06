@@ -2,7 +2,6 @@ import io
 import os
 from copy import deepcopy
 
-import requests  # kun je weghalen als je echt geen cloud wilt
 from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx import Presentation
@@ -14,21 +13,33 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 # -------------------------------------------------
 # configuratie
 # -------------------------------------------------
-BASE_TEMPLATE_NAME = "basis layout.pptx"   # staat in /templates
+# je template moet hier staan: <project>/templates/basis layout.pptx
+BASE_TEMPLATE_NAME = "basis layout.pptx"
+# optioneel logo: <project>/assets/logo.png
 LOCAL_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
-CHARS_PER_LINE = 75
+
+# -------------------------------------------------
+# simpele fallback samenvatter (geen OpenAI nodig)
+# -------------------------------------------------
+def summarize_text(text: str, max_chars: int = 450) -> str:
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0] + "..."
 
 
 # -------------------------------------------------
-# HELPER: koppen uit Word herkennen
+# DOCX → blokken
 # -------------------------------------------------
-def has_bold(para):
+def has_bold(para) -> bool:
     return any(run.bold for run in para.runs)
 
 
 def is_all_caps_heading(text: str) -> bool:
-    """herken dingen als 'SOORTEN KABELS', 'XMVK KABEL'"""
+    """
+    Herken jouw stijl kopjes: korte regels in hoofdletters zoals 'XMVK KABEL'
+    """
     txt = text.strip()
     if not txt:
         return False
@@ -37,14 +48,19 @@ def is_all_caps_heading(text: str) -> bool:
     return False
 
 
-def para_text_plain(para):
+def para_text_plain(para) -> str:
     return "".join(r.text for r in para.runs if r.text).strip()
 
 
 def docx_to_blocks(doc: Document):
     """
-    Maak: [ {title: '...', body: ['regel', ...]}, ... ]
-    Kop = vet OF ALL CAPS OF Heading.
+    Maak een lijst van blokken:
+    [
+      {"title": "INSTALLATIEKABEL", "body": ["uitleg...", "nog een regel..."]},
+      {"title": "SOORTEN KABELS", "body": [...]},
+      ...
+    ]
+    Kop = Heading of vet of ALL CAPS.
     """
     blocks = []
     current = None
@@ -59,12 +75,12 @@ def docx_to_blocks(doc: Document):
         is_caps = is_all_caps_heading(txt)
 
         if is_heading_style or is_bold_para or is_caps:
-            # nieuwe dia
+            # start nieuw blok
             if current:
                 blocks.append(current)
             current = {"title": txt, "body": []}
         else:
-            # hoort bij huidige dia
+            # hoort bij huidig blok
             if current is None:
                 current = {"title": "Lesstof", "body": []}
             current["body"].append(txt)
@@ -76,7 +92,7 @@ def docx_to_blocks(doc: Document):
 
 
 # -------------------------------------------------
-# HELPER: logo (simpel, alleen lokaal)
+# logo helpers (alleen lokaal)
 # -------------------------------------------------
 def get_logo_bytes():
     if os.path.exists(LOCAL_LOGO_PATH):
@@ -88,55 +104,55 @@ def get_logo_bytes():
 def add_logo_to_slide(slide, logo_bytes):
     if not logo_bytes:
         return
-    left = Inches(9.0 - 1.5)   # beetje van rechts
+    # positie kun je later tweaken
+    left = Inches(9.0 - 1.5)  # beetje van rechts
     top = Inches(0.2)
     width = Inches(1.5)
     slide.shapes.add_picture(io.BytesIO(logo_bytes), left, top, width=width)
 
 
 # -------------------------------------------------
-# HELPER: dia dupliceren en daarna leegmaken
+# pptx helpers
 # -------------------------------------------------
 def duplicate_slide_clean(prs: Presentation, slide_index: int, logo_bytes=None):
     """
-    1. kloon de slide (alle vormen blijven)
-    2. wis ALLE tekstframes
-    3. voeg logo toe
+    1. kloon de slide (vormgeving)
+    2. sla gelinkte plaatjes uit template over (die gaven dat privacy-kruisje)
+    3. wis ALLE tekst op de nieuwe slide
+    4. zet logo erop
     """
     source = prs.slides[slide_index]
     blank = prs.slide_layouts[0]
     dest = prs.slides.add_slide(blank)
 
-    # kopieer alle shapes behalve gelinkte plaatjes
+    # shapes kopiëren
     for shape in source.shapes:
+        # afbeeldingen uit template overslaan
         if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-            # die uit de template zijn vaak gelinkt → overslaan
             continue
         new_el = deepcopy(shape.element)
         dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
 
-    # alle tekst leegmaken (we willen zelf de titel/body plaatsen)
+    # alle tekst leegmaken
     for shape in dest.shapes:
         if hasattr(shape, "text_frame"):
             shape.text_frame.clear()
 
-    # logo opnieuw
+    # logo weer toevoegen
     if logo_bytes:
         add_logo_to_slide(dest, logo_bytes)
 
     return dest
 
 
-# -------------------------------------------------
-# HELPER: titel en body op vaste plek
-# -------------------------------------------------
 def set_title(slide, text: str):
-    # probeer eerst bestaande titel
+    """
+    Zet titel in bestaande title-placeholder, of maak zelf een titelvak.
+    """
     if slide.shapes.title is not None:
         slide.shapes.title.text = text
         return
 
-    # anders zelf een titelvak maken
     left = Inches(0.6)
     top = Inches(0.4)
     width = Inches(9.0)
@@ -153,8 +169,11 @@ def set_title(slide, text: str):
 
 
 def set_body(slide, text: str):
+    """
+    Plaats de tekst op een vaste plek onder de titel.
+    """
     left = Inches(0.8)
-    top = Inches(2.0)     # vaste plek
+    top = Inches(2.0)      # hier komt je tekst ALTIJD
     width = Inches(8.5)
     height = Inches(4.0)
     box = slide.shapes.add_textbox(left, top, width, height)
@@ -169,20 +188,60 @@ def set_body(slide, text: str):
 
 
 # -------------------------------------------------
-# MAIN
+# MAIN FUNCTIE
 # -------------------------------------------------
 def docx_to_pptx_hybrid(file_like):
+    # 1. template laden
     base_dir = os.path.dirname(__file__)
     template_path = os.path.join(base_dir, "templates", BASE_TEMPLATE_NAME)
 
     if os.path.exists(template_path):
         prs = Presentation(template_path)
     else:
-        prs = Presentation()  # fallback
+        prs = Presentation()  # fallback als template mist
 
-    # docx → blokken
+    # 2. docx → blokken
     doc = Document(file_like)
     blocks = docx_to_blocks(doc)
 
-    # logo
-    logo_bytes = get_logo
+    # 3. logo (optioneel)
+    logo_bytes = get_logo_bytes()
+
+    # 4. er moet minstens 1 slide zijn
+    if len(prs.slides) == 0:
+        prs.slides.add_slide(prs.slide_layouts[0])
+
+    # 5. eerste slide schoonmaken en vullen
+    first = prs.slides[0]
+
+    # alle tekst op de eerste slide leegmaken (anders blijft template-tekst staan)
+    for shape in first.shapes:
+        if hasattr(shape, "text_frame"):
+            shape.text_frame.clear()
+
+    # logo erop
+    if logo_bytes:
+        add_logo_to_slide(first, logo_bytes)
+
+    if blocks:
+        # titel + body uit eerste blok
+        set_title(first, blocks[0]["title"])
+        body_txt = "\n".join(blocks[0]["body"]) if blocks[0]["body"] else ""
+        body_txt = summarize_text(body_txt, max_chars=500)
+        set_body(first, body_txt)
+    else:
+        set_title(first, "Les gegenereerd met AI")
+
+    # 6. overige blokken → nieuwe dia’s
+    for block in blocks[1:]:
+        slide = duplicate_slide_clean(prs, 0, logo_bytes=logo_bytes)
+        set_title(slide, block["title"])
+        body_txt = "\n".join(block["body"]) if block["body"] else ""
+        body_txt = summarize_text(body_txt, max_chars=500)
+        set_body(slide, body_txt)
+
+    # 7. teruggeven als bytes
+    out = io.BytesIO()
+    prs.save(out)
+    out.seek(0)
+    return out
