@@ -3,26 +3,36 @@ import os
 import math
 import json
 from copy import deepcopy
-import requests  # <-- zorg dat requests in requirements.txt staat
+
+import requests  # zorg dat deze in requirements.txt staat
 from docx import Document
-from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.opc.constants import RT
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.oxml.xmlchemy import OxmlElement
 
+# -------------------------------------------------
+# instellingen
+# -------------------------------------------------
 CHARS_PER_LINE = 75
 
-# zet hier jouw cloudinary-url neer
-CLOUDINARY_LOGO_URL = os.getenv("CLOUDINARY_LOGO_URL", "https://res.cloudinary.com/....../logo.png")
-# als je ‘m weet mag je hem hardcoden:
-# CLOUDINARY_LOGO_URL = "https://res.cloudinary.com/jouwaccount/image/upload/v123456789/school-logo.png"
+# vul hier je echte cloudinary-url in
+CLOUDINARY_LOGO_URL = os.getenv(
+    "CLOUDINARY_LOGO_URL",
+    "https://res.cloudinary.com/je-eigen-account/image/upload/v123456789/jouw-logo.png"
+)
+# als je geen env wilt gebruiken, kun je ook gewoon hardcoden:
+# CLOUDINARY_LOGO_URL = "https://res.cloudinary.com/.../logo.png"
 
 
-# ---------- AI helper ----------
+# -------------------------------------------------
+# AI helper (met fallback)
+# -------------------------------------------------
 def summarize_with_ai(text: str, max_bullets: int = 0) -> str | list:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
+        # simpele fallback
         words = text.split()
         if max_bullets:
             parts = [p.strip() for p in text.replace("•", "\n").split("\n") if p.strip()]
@@ -66,6 +76,7 @@ Tekst:
             return resp.choices[0].message.content.strip()
 
     except Exception:
+        # fallback
         words = text.split()
         if max_bullets:
             parts = [p.strip() for p in text.replace("•", "\n").split("\n") if p.strip()]
@@ -74,7 +85,9 @@ Tekst:
         return short + "..." if len(words) > 40 else short
 
 
-# ---------- DOCX helpers ----------
+# -------------------------------------------------
+# DOCX helpers
+# -------------------------------------------------
 def extract_images(doc):
     imgs = []
     for rel in doc.part.rels.values():
@@ -99,25 +112,27 @@ def para_text_plain(para):
     return "".join(run.text for run in para.runs if run.text).strip()
 
 
-# ---------- PPTX helpers ----------
+# -------------------------------------------------
+# PPTX helpers
+# -------------------------------------------------
 def get_logo_bytes():
-    """Download logo 1x van Cloudinary (of geef None als het niet lukt)."""
-    if not CLOUDINARY_LOGO_URL or CLOUDINARY_LOGO_URL.startswith("http") is False:
+    """Download het logo van Cloudinary en geef echte bytes terug."""
+    if not CLOUDINARY_LOGO_URL or not CLOUDINARY_LOGO_URL.startswith("http"):
         return None
     try:
         resp = requests.get(CLOUDINARY_LOGO_URL, timeout=10)
         if resp.status_code == 200:
-            return resp.content
-    except Exception:
-        return None
+            return resp.content  # dit zijn de raw bytes
+    except Exception as e:
+        print("⚠️ kon logo niet downloaden:", e)
     return None
 
 
 def add_logo_to_slide(slide, logo_bytes):
-    """Plaats logo rechtsboven op de dia."""
+    """Zet het logo rechtsboven op de dia."""
     if not logo_bytes:
         return
-    # pas dit aan op jouw dia-formaat
+    # positie kun je aanpassen aan jouw dia
     left = Inches(9.0 - 1.5)  # beetje van rechts
     top = Inches(0.2)
     width = Inches(1.5)
@@ -126,7 +141,8 @@ def add_logo_to_slide(slide, logo_bytes):
 
 def duplicate_slide(prs, slide_index=0, logo_bytes=None):
     """
-    Kopieer dia inclusief shapes (maar zonder rels), en zet daarna logo er los op.
+    Kopieer dia 0 inclusief shapes.
+    Dit is een workaround omdat python-pptx geen slide-duplicate heeft.
     """
     source = prs.slides[slide_index]
     blank_layout = prs.slide_layouts[0]
@@ -137,7 +153,7 @@ def duplicate_slide(prs, slide_index=0, logo_bytes=None):
         new_el = deepcopy(el)
         dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
 
-    # logo opnieuw toevoegen
+    # logo opnieuw toevoegen zodat hij altijd zichtbaar is
     if logo_bytes:
         add_logo_to_slide(dest, logo_bytes)
 
@@ -165,12 +181,14 @@ def add_textbox(slide, text, top_inch=1.5, est_lines=1):
     tf = shape.text_frame
     tf.word_wrap = True
     tf.text = text
-    # haal deze styling weg als je template-stijl wil houden
+
+    # als je 100% de template-stijl wil, haal dit weg
     for p in tf.paragraphs:
         for r in p.runs:
             r.font.name = "Arial"
             r.font.size = Pt(16)
             r.font.color.rgb = RGBColor(0, 0, 0)
+
     return height_inch
 
 
@@ -182,31 +200,34 @@ def add_inline_image(slide, img_bytes, top_inch):
     return 3.0
 
 
-# ---------- MAIN ----------
+# -------------------------------------------------
+# MAIN
+# -------------------------------------------------
 def docx_to_pptx_hybrid(file_like):
     """
-    Word -> PowerPoint
-    - gebruikt templates/basis layout.pptx
+    - laadt templates/basis layout.pptx
     - elke nieuwe dia is een kloon van dia 0
-    - logo van Cloudinary wordt op elke dia geplakt
+    - logo van Cloudinary op elke dia
+    - headings in DOCX -> nieuwe dia
     """
     base_dir = os.path.dirname(__file__)
     template_path = os.path.join(base_dir, "templates", "basis layout.pptx")
 
     if not os.path.exists(template_path):
-        print("⚠️ Template 'basis layout.pptx' niet gevonden.")
+        print("⚠️ Template 'basis layout.pptx' niet gevonden, maakt lege ppt.")
         prs = Presentation()
     else:
         prs = Presentation(template_path)
 
-    # logo 1x ophalen
+    # logo 1x downloaden
     logo_bytes = get_logo_bytes()
 
+    # docx inlezen
     doc = Document(file_like)
     all_images = extract_images(doc)
     img_ptr = 0
 
-    # start met eerste dia uit template en zet logo erop
+    # start met de eerste dia uit de template
     current_slide = prs.slides[0]
     if logo_bytes:
         add_logo_to_slide(current_slide, logo_bytes)
@@ -224,7 +245,7 @@ def docx_to_pptx_hybrid(file_like):
         is_list = is_word_list_paragraph(para)
         has_image = any("graphic" in run._element.xml for run in para.runs)
 
-        # nieuwe dia bij kopje of vet
+        # nieuwe dia bij kopje of vetgedrukte regel
         if is_heading or is_bold:
             current_slide = duplicate_slide(prs, 0, logo_bytes=logo_bytes)
             if current_slide.shapes.title:
@@ -241,7 +262,7 @@ def docx_to_pptx_hybrid(file_like):
                 current_y += 3.2
             continue
 
-        # lijst
+        # lijst -> bullets
         if is_list:
             bullets = summarize_with_ai(raw_text, max_bullets=3)
             shape = current_slide.shapes.add_textbox(Inches(0.8), Inches(current_y), Inches(7.5), Inches(3))
@@ -257,11 +278,12 @@ def docx_to_pptx_hybrid(file_like):
             current_y += 0.3 * len(bullets)
             continue
 
-        # gewone tekst
+        # gewone alinea
         short_text = summarize_with_ai(raw_text)
         h = add_textbox(current_slide, short_text, top_inch=current_y)
         current_y += h + 0.3
 
+    # presentatie teruggeven als bytes
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
