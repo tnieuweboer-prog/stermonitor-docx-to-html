@@ -1,7 +1,7 @@
 import io
 import os
-import math
 import json
+import math
 from copy import deepcopy
 
 import requests
@@ -11,23 +11,25 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.oxml.xmlchemy import OxmlElement
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
+# -------------------------------------------------
+# instellingen
+# -------------------------------------------------
 CHARS_PER_LINE = 75
 
-# -------------------------------
-# Cloudinary config (invullen!)
-# -------------------------------
-CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "JOUW_CLOUD_NAME")
-CLOUDINARY_UPLOAD_PRESET = os.getenv("CLOUDINARY_UPLOAD_PRESET", "JOUW_UPLOAD_PRESET")  # voor unsigned
-CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "")
-CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")
-
-# lokaal logo in je repo
+BASE_TEMPLATE_NAME = "basis layout.pptx"  # jouw bestand
 LOCAL_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
-# -----------------------------------
-# AI helper (zelfde als eerder)
-# -----------------------------------
+# cloudinary (optioneel)
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+CLOUDINARY_UPLOAD_PRESET = os.getenv("CLOUDINARY_UPLOAD_PRESET", "")
+CLOUDINARY_LOGO_URL = os.getenv("CLOUDINARY_LOGO_URL", "")
+
+
+# -------------------------------------------------
+# AI helper (zoals eerder)
+# -------------------------------------------------
 def summarize_with_ai(text: str, max_bullets: int = 0) -> str | list:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -51,7 +53,7 @@ Alleen de kern. Geef JSON als:
 Tekst:
 {text}
 """
-            resp = client.chat.completions.create(
+            resp = client.chat_completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
@@ -72,7 +74,6 @@ Tekst:
                 messages=[{"role": "user", "content": prompt}],
             )
             return resp.choices[0].message.content.strip()
-
     except Exception:
         words = text.split()
         if max_bullets:
@@ -82,9 +83,9 @@ Tekst:
         return short + "..." if len(words) > 40 else short
 
 
-# -----------------------------------
+# -------------------------------------------------
 # DOCX helpers
-# -----------------------------------
+# -------------------------------------------------
 def extract_images(doc):
     imgs = []
     for rel in doc.part.rels.values():
@@ -109,81 +110,92 @@ def para_text_plain(para):
     return "".join(run.text for run in para.runs if run.text).strip()
 
 
-# -----------------------------------
+def docx_to_blocks(doc: Document):
+    """
+    Maak blokken: elke keer dat we een heading of vetgedrukte paragraaf zien,
+    starten we een nieuw blok. Alles daarna (gewone tekst, lijsten) hoort bij dat blok.
+    """
+    blocks = []
+    current_block = None
+
+    for para in doc.paragraphs:
+        text = (para.text or "").strip()
+        if not text:
+            continue
+
+        is_heading = para.style and para.style.name and para.style.name.startswith("Heading")
+        is_bold = has_bold(para)
+
+        if is_heading or is_bold:
+            # nieuw blok starten
+            if current_block:
+                blocks.append(current_block)
+            current_block = {
+                "title": para_text_plain(para),
+                "body": []
+            }
+        else:
+            # hoort bij huidige blok
+            if current_block is None:
+                # tekst zonder kop → zet in algemene blok
+                current_block = {"title": "Lesstof", "body": []}
+            current_block["body"].append(text)
+
+    if current_block:
+        blocks.append(current_block)
+
+    return blocks
+
+
+# -------------------------------------------------
 # Cloudinary helpers
-# -----------------------------------
+# -------------------------------------------------
 def upload_logo_to_cloudinary(local_path: str) -> str | None:
-    """
-    Upload lokale logo naar Cloudinary en geef secure_url terug.
-    Werkt met unsigned upload (upload preset) of signed upload.
-    """
+    if not CLOUDINARY_CLOUD_NAME:
+        return None
     if not os.path.exists(local_path):
-        print("⚠️ lokaal logo niet gevonden:", local_path)
         return None
 
     url = f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/image/upload"
-
-    files = {
-        "file": open(local_path, "rb"),
-    }
-
+    files = {"file": open(local_path, "rb")}
     data = {}
 
-    # eerst proberen met upload preset (meestal het makkelijkst)
-    if CLOUDINARY_UPLOAD_PRESET and CLOUDINARY_UPLOAD_PRESET != "JOUW_UPLOAD_PRESET":
+    if CLOUDINARY_UPLOAD_PRESET:
         data["upload_preset"] = CLOUDINARY_UPLOAD_PRESET
-    elif CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
-        # signed upload
-        # voor simplicity laten we hier de sign-stap achterwege, maar zo heb je de vorm
-        data["api_key"] = CLOUDINARY_API_KEY
-        # normaal: timestamp + signature maken
-        # maar vaak is upload preset al genoeg
-    else:
-        print("⚠️ Geen Cloudinary config gevonden (upload preset of API key/secret).")
-        return None
 
     try:
         resp = requests.post(url, files=files, data=data, timeout=15)
         if resp.status_code == 200:
-            info = resp.json()
-            return info.get("secure_url")
+            return resp.json().get("secure_url")
         else:
-            print("⚠️ Cloudinary upload faalde:", resp.status_code, resp.text)
+            print("Cloudinary upload mislukte:", resp.status_code, resp.text)
     except Exception as e:
-        print("⚠️ kon niet uploaden naar Cloudinary:", e)
-
+        print("Cloudinary upload fout:", e)
     return None
 
 
-def get_logo_bytes_from_url(url: str) -> bytes | None:
-    try:
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            return r.content
-    except Exception as e:
-        print("⚠️ kon logo-url niet ophalen:", e)
-    return None
+def get_logo_bytes():
+    # 1. als er al een url is, gebruik die
+    if CLOUDINARY_LOGO_URL:
+        try:
+            r = requests.get(CLOUDINARY_LOGO_URL, timeout=10)
+            if r.status_code == 200:
+                return r.content
+        except Exception:
+            pass
 
+    # 2. anders proberen lokaal up te loaden
+    if os.path.exists(LOCAL_LOGO_PATH) and CLOUDINARY_CLOUD_NAME:
+        url = upload_logo_to_cloudinary(LOCAL_LOGO_PATH)
+        if url:
+            try:
+                r = requests.get(url, timeout=10)
+                if r.status_code == 200:
+                    return r.content
+            except Exception:
+                pass
 
-def ensure_logo_bytes() -> bytes | None:
-    """
-    1. probeer LOGO_URL uit env
-    2. anders: upload lokaal logo naar Cloudinary
-    3. download het logo terug als bytes
-    """
-    logo_url_env = os.getenv("CLOUDINARY_LOGO_URL", "").strip()
-
-    if logo_url_env:
-        # user heeft zelf al URL gezet
-        return get_logo_bytes_from_url(logo_url_env)
-
-    # anders: zelf uploaden
-    uploaded_url = upload_logo_to_cloudinary(LOCAL_LOGO_PATH)
-    if uploaded_url:
-        # je kunt hier evt. die url in een klein bestandje schrijven zodat je niet elke keer uploadt
-        return get_logo_bytes_from_url(uploaded_url)
-
-    # laatste redmiddel: direct lokaal inlezen zonder cloudinary
+    # 3. anders: gewoon lokaal inlezen (dan staat hij niet op cloudinary, maar wél embedded)
     if os.path.exists(LOCAL_LOGO_PATH):
         with open(LOCAL_LOGO_PATH, "rb") as f:
             return f.read()
@@ -191,24 +203,31 @@ def ensure_logo_bytes() -> bytes | None:
     return None
 
 
-# -----------------------------------
+# -------------------------------------------------
 # PPTX helpers
-# -----------------------------------
+# -------------------------------------------------
 def add_logo_to_slide(slide, logo_bytes):
     if not logo_bytes:
         return
-    left = Inches(9.0 - 1.5)  # aanpassen aan jouw dia
+    left = Inches(9.0 - 1.5)  # beetje van rechts
     top = Inches(0.2)
     width = Inches(1.5)
     slide.shapes.add_picture(io.BytesIO(logo_bytes), left, top, width=width)
 
 
-def duplicate_slide(prs, slide_index=0, logo_bytes=None):
+def duplicate_slide_no_external_pics(prs, slide_index=0, logo_bytes=None):
+    """
+    Kopieer dia 0, maar sla externe/gelinkte afbeeldingen over (die geven dat privacy-vierkant).
+    """
     source = prs.slides[slide_index]
     blank_layout = prs.slide_layouts[0]
     dest = prs.slides.add_slide(blank_layout)
 
     for shape in source.shapes:
+        # sommige templates hebben gelinkte images → die slaan we over
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            # skip, we voegen straks zelf het logo toe
+            continue
         el = shape.element
         new_el = deepcopy(el)
         dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
@@ -219,24 +238,15 @@ def duplicate_slide(prs, slide_index=0, logo_bytes=None):
     return dest
 
 
-def make_bullet(paragraph):
-    pPr = paragraph._p.get_or_add_pPr()
-    for child in list(pPr):
-        if child.tag.endswith("buNone"):
-            pPr.remove(child)
-    pPr.set("marL", "288000")
-    pPr.set("indent", "-144000")
-    buChar = OxmlElement("a:buChar")
-    buChar.set("char", "•")
-    pPr.append(buChar)
-
-
-def add_textbox(slide, text, top_inch=1.5, est_lines=1):
+def add_body_text(slide, text, top_inch=2.0):
+    """
+    Voeg een tekstvak toe op een vaste plek.
+    """
     left = Inches(0.8)
     top = Inches(top_inch)
-    width = Inches(8.0)
-    height_inch = 0.6 + (est_lines - 1) * 0.25
-    shape = slide.shapes.add_textbox(left, top, width, Inches(height_inch))
+    width = Inches(8.5)
+    height = Inches(3.5)
+    shape = slide.shapes.add_textbox(left, top, width, height)
     tf = shape.text_frame
     tf.word_wrap = True
     tf.text = text
@@ -245,89 +255,53 @@ def add_textbox(slide, text, top_inch=1.5, est_lines=1):
             r.font.name = "Arial"
             r.font.size = Pt(16)
             r.font.color.rgb = RGBColor(0, 0, 0)
-    return height_inch
 
 
-def add_inline_image(slide, img_bytes, top_inch):
-    left = Inches(1.0)
-    top = Inches(top_inch)
-    width = Inches(4.5)
-    slide.shapes.add_picture(io.BytesIO(img_bytes), left, top, width=width)
-    return 3.0
-
-
-# -----------------------------------
+# -------------------------------------------------
 # MAIN
-# -----------------------------------
+# -------------------------------------------------
 def docx_to_pptx_hybrid(file_like):
     base_dir = os.path.dirname(__file__)
-    template_path = os.path.join(base_dir, "templates", "basis layout.pptx")
+    template_path = os.path.join(base_dir, "templates", BASE_TEMPLATE_NAME)
 
     if not os.path.exists(template_path):
-        print("⚠️ Template 'basis layout.pptx' niet gevonden, lege presentatie gemaakt.")
+        print("⚠️ Template niet gevonden, maak lege presentatie.")
         prs = Presentation()
     else:
         prs = Presentation(template_path)
 
-    # 1x logo regelen (uploaden indien nodig)
-    logo_bytes = ensure_logo_bytes()
+    # logo 1x regelen
+    logo_bytes = get_logo_bytes()
 
+    # docx lezen en omzetten naar blokken (kop + tekst)
     doc = Document(file_like)
-    all_images = extract_images(doc)
-    img_ptr = 0
+    blocks = docx_to_blocks(doc)
 
-    # start met dia 0 uit template
-    current_slide = prs.slides[0]
+    # eerste dia van template gebruiken als basis
+    # en meteen logo erop
+    if len(prs.slides) == 0:
+        prs.slides.add_slide(prs.slide_layouts[0])
+    prs.slides[0].shapes.title.text = blocks[0]["title"] if blocks else "Les gegenereerd met AI"
     if logo_bytes:
-        add_logo_to_slide(current_slide, logo_bytes)
-    if current_slide.shapes.title:
-        current_slide.shapes.title.text = "Les gegenereerd met AI"
-    current_y = 2.0
+        add_logo_to_slide(prs.slides[0], logo_bytes)
+    if blocks and blocks[0]["body"]:
+        body_text = "\n".join(blocks[0]["body"])
+        add_body_text(prs.slides[0], body_text, top_inch=2.0)
 
-    for para in doc.paragraphs:
-        raw_text = (para.text or "").strip()
-        if not raw_text:
-            continue
+    # overige blokken → nieuwe dia’s
+    for block in blocks[1:]:
+        slide = duplicate_slide_no_external_pics(prs, 0, logo_bytes=logo_bytes)
+        # titel invullen
+        if slide.shapes.title:
+            slide.shapes.title.text = block["title"]
+        # tekst invullen
+        body_text = "\n".join(block["body"]) if block["body"] else ""
+        # evt. nog korter maken
+        if len(body_text) > 450:
+            body_text = summarize_with_ai(body_text)
+        add_body_text(slide, body_text, top_inch=2.0)
 
-        is_heading = para.style.name.startswith("Heading")
-        is_bold = has_bold(para)
-        is_list = is_word_list_paragraph(para)
-        has_image = any("graphic" in run._element.xml for run in para.runs)
-
-        if is_heading or is_bold:
-            current_slide = duplicate_slide(prs, 0, logo_bytes=logo_bytes)
-            if current_slide.shapes.title:
-                current_slide.shapes.title.text = para_text_plain(para)
-            current_y = 2.0
-            continue
-
-        if has_image:
-            if img_ptr < len(all_images):
-                _, img_bytes = all_images[img_ptr]
-                img_ptr += 1
-                add_inline_image(current_slide, img_bytes, current_y)
-                current_y += 3.2
-            continue
-
-        if is_list:
-            bullets = summarize_with_ai(raw_text, max_bullets=3)
-            shape = current_slide.shapes.add_textbox(Inches(0.8), Inches(current_y), Inches(7.5), Inches(3))
-            tf = shape.text_frame
-            tf.word_wrap = True
-            for i, b in enumerate(bullets):
-                p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
-                p.text = b
-                make_bullet(p)
-                for r in p.runs:
-                    r.font.name = "Arial"
-                    r.font.size = Pt(16)
-            current_y += 0.3 * len(bullets)
-            continue
-
-        short_text = summarize_with_ai(raw_text)
-        h = add_textbox(current_slide, short_text, top_inch=current_y)
-        current_y += h + 0.3
-
+    # presentatie teruggeven
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
