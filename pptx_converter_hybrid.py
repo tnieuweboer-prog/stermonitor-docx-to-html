@@ -2,6 +2,7 @@ import io
 import os
 import math
 import json
+from copy import deepcopy  # <-- toegevoegd
 from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx import Presentation
@@ -26,6 +27,7 @@ def summarize_with_ai(text: str, max_bullets: int = 0) -> str | list:
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
+
         if max_bullets:
             prompt = f"""
 Maak van deze tekst maximaal {max_bullets} korte bullets (mbo/havo-niveau, 1 regel per bullet).
@@ -56,6 +58,7 @@ Tekst:
                 messages=[{"role": "user", "content": prompt}],
             )
             return resp.choices[0].message.content.strip()
+
     except Exception:
         words = text.split()
         if max_bullets:
@@ -92,22 +95,24 @@ def para_text_plain(para):
 
 # ---------- PPTX helpers ----------
 def duplicate_slide(prs, slide_index=0):
-    """Kopieert een bestaande dia (bijv. de eerste) inclusief alle shapes, stijl en achtergrond."""
+    """
+    Kopieert een bestaande dia inclusief shapes.
+    Let op: python-pptx heeft hier geen officiële API voor,
+    dus we klonen de XML van elke shape.
+    """
     source = prs.slides[slide_index]
+    # gebruik een lege layout als container
     blank_layout = prs.slide_layouts[0]
     dest = prs.slides.add_slide(blank_layout)
 
-    # kopieer shapes
+    # shapes kopiëren
     for shape in source.shapes:
         el = shape.element
-        new_el = el.clone()
+        new_el = deepcopy(el)
+        # _spTree is de lijst met shapes op de dia
         dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
 
-    # kopieer achtergrond
-    if source.background:
-        bg = source.background
-        dest.background = bg
-
+    # achtergrond klonen is niet altijd nodig, vaak zit die in de master
     return dest
 
 
@@ -124,7 +129,6 @@ def make_bullet(paragraph):
 
 
 def add_textbox(slide, text, top_inch=1.5, est_lines=1):
-    """Voeg tekst toe op vaste positie (gebruik templatekleur tenzij overschreven)."""
     left = Inches(0.8)
     top = Inches(top_inch)
     width = Inches(8.0)
@@ -133,6 +137,7 @@ def add_textbox(slide, text, top_inch=1.5, est_lines=1):
     tf = shape.text_frame
     tf.word_wrap = True
     tf.text = text
+    # we kunnen dit weghalen als je 100% template-stijl wil
     for p in tf.paragraphs:
         for r in p.runs:
             r.font.name = "Arial"
@@ -151,7 +156,9 @@ def add_inline_image(slide, img_bytes, top_inch):
 
 # ---------- MAIN ----------
 def docx_to_pptx_hybrid(file_like):
-    """Elke nieuwe dia is een kopie van de eerste dia uit 'basis layout.pptx'."""
+    """
+    Elke nieuwe dia is een kopie van de eerste dia uit 'basis layout.pptx'.
+    """
     base_dir = os.path.dirname(__file__)
     template_path = os.path.join(base_dir, "templates", "basis layout.pptx")
 
@@ -165,7 +172,7 @@ def docx_to_pptx_hybrid(file_like):
     all_images = extract_images(doc)
     img_ptr = 0
 
-    # gebruik eerste dia uit template als basis
+    # begin met de eerste dia uit de template
     current_slide = prs.slides[0]
     if current_slide.shapes.title:
         current_slide.shapes.title.text = "Les gegenereerd met AI"
@@ -189,7 +196,6 @@ def docx_to_pptx_hybrid(file_like):
             current_y = 2.0
             continue
 
-        # afbeelding toevoegen
         if has_image:
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
@@ -198,7 +204,6 @@ def docx_to_pptx_hybrid(file_like):
                 current_y += 3.2
             continue
 
-        # lijst met bullets
         if is_list:
             bullets = summarize_with_ai(raw_text, max_bullets=3)
             shape = current_slide.shapes.add_textbox(Inches(0.8), Inches(current_y), Inches(7.5), Inches(3))
@@ -223,5 +228,4 @@ def docx_to_pptx_hybrid(file_like):
     prs.save(out)
     out.seek(0)
     return out
-
 
