@@ -6,7 +6,7 @@ from copy import deepcopy
 
 import requests  # zorg dat deze in requirements.txt staat
 from docx import Document
-from docx.opc.constants import RT
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
