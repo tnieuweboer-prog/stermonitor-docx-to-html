@@ -1,6 +1,6 @@
 import io
-import math
 import os
+import math
 import json
 from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -9,19 +9,13 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.oxml.xmlchemy import OxmlElement
 
-TITLE_LAYOUT = 0
-TITLE_ONLY_LAYOUT = 5
-BLANK_LAYOUT = 6
-MAX_LINES_PER_SLIDE = 12
 CHARS_PER_LINE = 75
-MAX_BOTTOM_INCH = 6.6
 
 
 # ----------- AI helper -----------
 def summarize_with_ai(text: str, max_bullets: int = 0) -> str | list:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        # lokale fallback
         words = text.split()
         if max_bullets:
             parts = [p.strip() for p in text.replace("•", "\n").split("\n") if p.strip()]
@@ -110,6 +104,14 @@ def estimate_line_count(text: str) -> int:
 
 
 # ----------- PPTX helpers -----------
+def find_layout_by_name(prs: Presentation, search: str):
+    search_lower = search.lower()
+    for layout in prs.slide_layouts:
+        if layout.name and search_lower in layout.name.lower():
+            return layout
+    return prs.slide_layouts[0]  # fallback
+
+
 def make_bullet(paragraph):
     pPr = paragraph._p.get_or_add_pPr()
     for child in list(pPr):
@@ -132,6 +134,7 @@ def add_textbox(slide, text, top_inch=1.0, est_lines=1):
     tf.text = text
     tf.word_wrap = True
     tf.margin_left = Inches(0.2)
+    # Als je volledig template-stijl wil behouden, haal deze for-loop weg
     for p in tf.paragraphs:
         for r in p.runs:
             r.font.name = "Arial"
@@ -141,13 +144,11 @@ def add_textbox(slide, text, top_inch=1.0, est_lines=1):
 
 
 def create_title_only_slide(prs, title_text):
-    slide = prs.slides.add_slide(prs.slide_layouts[TITLE_ONLY_LAYOUT])
-    slide.shapes.title.text = title_text
+    layout = find_layout_by_name(prs, "alleen titel") or find_layout_by_name(prs, "title only")
+    slide = prs.slides.add_slide(layout)
+    if slide.shapes.title:
+        slide.shapes.title.text = title_text
     return slide
-
-
-def create_blank_slide(prs):
-    return prs.slides.add_slide(prs.slide_layouts[BLANK_LAYOUT])
 
 
 def add_inline_image(slide, img_bytes, top_inch):
@@ -160,15 +161,22 @@ def add_inline_image(slide, img_bytes, top_inch):
 
 # ----------- MAIN -----------
 def docx_to_pptx_hybrid(file_like):
+    # Template pad vast in software
+    base_dir = os.path.dirname(__file__)
+    template_path = os.path.join(base_dir, "templates", "KTO 1.pptx")
+
+    if os.path.exists(template_path):
+        prs = Presentation(template_path)
+    else:
+        print("⚠️ Waarschuwing: Template niet gevonden, gebruik standaard PowerPoint-layout.")
+        prs = Presentation()
+
     doc = Document(file_like)
-    prs = Presentation()
     all_images = extract_images(doc)
     img_ptr = 0
 
-    current_slide = prs.slides.add_slide(prs.slide_layouts[TITLE_ONLY_LAYOUT])
-    current_slide.shapes.title.text = "Les gegenereerd met AI"
+    current_slide = create_title_only_slide(prs, "Les gegenereerd met AI")
     current_y = 2.0
-    used_lines = 0
 
     for para in doc.paragraphs:
         raw_text = (para.text or "").strip()
@@ -180,7 +188,6 @@ def docx_to_pptx_hybrid(file_like):
         if is_heading or is_bold_title:
             current_slide = create_title_only_slide(prs, para_text_plain(para))
             current_y = 2.0
-            used_lines = 0
             continue
 
         if has_image:
@@ -210,7 +217,7 @@ def docx_to_pptx_hybrid(file_like):
             continue
 
         if raw_text:
-            short_text = summarize_with_ai(raw_text, max_bullets=0)
+            short_text = summarize_with_ai(raw_text)
             h = add_textbox(current_slide, short_text, top_inch=current_y)
             current_y += h + 0.3
 
@@ -218,5 +225,4 @@ def docx_to_pptx_hybrid(file_like):
     prs.save(out)
     out.seek(0)
     return out
-
 
