@@ -14,7 +14,6 @@ CHARS_PER_LINE = 75
 
 # ---------- AI helper ----------
 def summarize_with_ai(text: str, max_bullets: int = 0) -> str | list:
-    """Vat tekst samen in korte bullets of een alinea met OpenAI (of lokale fallback)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         words = text.split()
@@ -27,7 +26,6 @@ def summarize_with_ai(text: str, max_bullets: int = 0) -> str | list:
     try:
         from openai import OpenAI
         client = OpenAI(api_key=api_key)
-
         if max_bullets:
             prompt = f"""
 Maak van deze tekst maximaal {max_bullets} korte bullets (mbo/havo-niveau, 1 regel per bullet).
@@ -58,7 +56,6 @@ Tekst:
                 messages=[{"role": "user", "content": prompt}],
             )
             return resp.choices[0].message.content.strip()
-
     except Exception:
         words = text.split()
         if max_bullets:
@@ -94,15 +91,24 @@ def para_text_plain(para):
 
 
 # ---------- PPTX helpers ----------
-def get_base_layout(prs):
-    """
-    Zoek naar een layout met een herkenbare naam (zoals 'Basis', 'Titel en inhoud', 'Lesdia', etc.)
-    """
-    for layout in prs.slide_layouts:
-        name = (layout.name or "").lower()
-        if any(k in name for k in ["basis", "titel en inhoud", "les", "title and content"]):
-            return layout
-    return prs.slide_layouts[0]
+def duplicate_slide(prs, slide_index=0):
+    """Kopieert een bestaande dia (bijv. de eerste) inclusief alle shapes, stijl en achtergrond."""
+    source = prs.slides[slide_index]
+    blank_layout = prs.slide_layouts[0]
+    dest = prs.slides.add_slide(blank_layout)
+
+    # kopieer shapes
+    for shape in source.shapes:
+        el = shape.element
+        new_el = el.clone()
+        dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
+
+    # kopieer achtergrond
+    if source.background:
+        bg = source.background
+        dest.background = bg
+
+    return dest
 
 
 def make_bullet(paragraph):
@@ -118,20 +124,15 @@ def make_bullet(paragraph):
 
 
 def add_textbox(slide, text, top_inch=1.5, est_lines=1):
-    """
-    Tekst toevoegen aan een dia met basisopmaak.
-    Wil je 100% de template-stijl behouden, haal dan de for-loop met fonts weg.
-    """
+    """Voeg tekst toe op vaste positie (gebruik templatekleur tenzij overschreven)."""
     left = Inches(0.8)
     top = Inches(top_inch)
     width = Inches(8.0)
     height_inch = 0.6 + (est_lines - 1) * 0.25
-
     shape = slide.shapes.add_textbox(left, top, width, Inches(height_inch))
     tf = shape.text_frame
     tf.word_wrap = True
     tf.text = text
-
     for p in tf.paragraphs:
         for r in p.runs:
             r.font.name = "Arial"
@@ -141,7 +142,6 @@ def add_textbox(slide, text, top_inch=1.5, est_lines=1):
 
 
 def add_inline_image(slide, img_bytes, top_inch):
-    """Voeg een afbeelding in op de opgegeven hoogte."""
     left = Inches(1.0)
     top = Inches(top_inch)
     width = Inches(4.5)
@@ -151,28 +151,24 @@ def add_inline_image(slide, img_bytes, top_inch):
 
 # ---------- MAIN ----------
 def docx_to_pptx_hybrid(file_like):
-    """
-    Zet een Word-document om naar PowerPoint.
-    Elke dia gebruikt de layout van 'basis layout.pptx'.
-    """
+    """Elke nieuwe dia is een kopie van de eerste dia uit 'basis layout.pptx'."""
     base_dir = os.path.dirname(__file__)
     template_path = os.path.join(base_dir, "templates", "basis layout.pptx")
 
     if not os.path.exists(template_path):
-        print("⚠️ Template 'basis layout.pptx' niet gevonden, standaardlayout wordt gebruikt.")
+        print("⚠️ Template 'basis layout.pptx' niet gevonden.")
         prs = Presentation()
     else:
         prs = Presentation(template_path)
 
-    base_layout = get_base_layout(prs)
     doc = Document(file_like)
     all_images = extract_images(doc)
     img_ptr = 0
 
-    # eerste dia
-    slide = prs.slides.add_slide(base_layout)
-    if slide.shapes.title:
-        slide.shapes.title.text = "Les gegenereerd met AI"
+    # gebruik eerste dia uit template als basis
+    current_slide = prs.slides[0]
+    if current_slide.shapes.title:
+        current_slide.shapes.title.text = "Les gegenereerd met AI"
     current_y = 2.0
 
     for para in doc.paragraphs:
@@ -185,27 +181,27 @@ def docx_to_pptx_hybrid(file_like):
         is_list = is_word_list_paragraph(para)
         has_image = any("graphic" in run._element.xml for run in para.runs)
 
-        # nieuwe dia bij kopje
+        # nieuwe dia bij kopje of vetgedrukte regel → echte duplicatie
         if is_heading or is_bold:
-            slide = prs.slides.add_slide(base_layout)
-            if slide.shapes.title:
-                slide.shapes.title.text = para_text_plain(para)
+            current_slide = duplicate_slide(prs, 0)
+            if current_slide.shapes.title:
+                current_slide.shapes.title.text = para_text_plain(para)
             current_y = 2.0
             continue
 
-        # afbeeldingen
+        # afbeelding toevoegen
         if has_image:
             if img_ptr < len(all_images):
                 _, img_bytes = all_images[img_ptr]
                 img_ptr += 1
-                add_inline_image(slide, img_bytes, current_y)
+                add_inline_image(current_slide, img_bytes, current_y)
                 current_y += 3.2
             continue
 
-        # lijsten → bullets
+        # lijst met bullets
         if is_list:
             bullets = summarize_with_ai(raw_text, max_bullets=3)
-            shape = slide.shapes.add_textbox(Inches(0.8), Inches(current_y), Inches(7.5), Inches(3))
+            shape = current_slide.shapes.add_textbox(Inches(0.8), Inches(current_y), Inches(7.5), Inches(3))
             tf = shape.text_frame
             tf.word_wrap = True
             for i, b in enumerate(bullets):
@@ -220,12 +216,12 @@ def docx_to_pptx_hybrid(file_like):
 
         # gewone tekst
         short_text = summarize_with_ai(raw_text)
-        h = add_textbox(slide, short_text, top_inch=current_y)
+        h = add_textbox(current_slide, short_text, top_inch=current_y)
         current_y += h + 0.3
 
-    # export
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
     return out
+
 
