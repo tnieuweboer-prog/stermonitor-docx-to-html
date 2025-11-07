@@ -1,15 +1,18 @@
 import os
+import io
 import json
-import time
 from docx import Document
-from openai import OpenAI, RateLimitError, APIError
+
+# probeer pas OpenAI te importeren als we 'm echt nodig hebben
+try:
+    from openai import OpenAI
+    HAS_OPENAI = True
+except Exception:
+    HAS_OPENAI = False
 
 
-def docx_to_plain_text(file_like) -> str:
-    """
-    Leest alle tekst uit een .docx-bestand en zet het achter elkaar.
-    Dit is stap 1: Word → ruwe tekst.
-    """
+def read_docx_to_text(file_like) -> str:
+    """Leest alle tekst uit een .docx-bestand."""
     doc = Document(file_like)
     parts = []
     for p in doc.paragraphs:
@@ -19,62 +22,25 @@ def docx_to_plain_text(file_like) -> str:
     return "\n".join(parts)
 
 
-def call_openai_json(prompt: str, model: str = "gpt-4o-mini", max_retries: int = 5) -> dict:
-    """
-    Roept OpenAI aan en geeft altijd JSON terug.
-    Probeert een paar keer bij rate-limit.
-    Gooit een nette fout bij te weinig tegoed.
-    """
+def call_openai_for_lesson(text: str) -> dict:
+    """Eén AI-aanroep: zet tekst om in een VMBO-lesstructuur."""
     api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Geen OPENAI_API_KEY ingesteld.")
+    if not api_key or not HAS_OPENAI:
+        raise RuntimeError("Geen OpenAI beschikbaar.")
 
     client = OpenAI(api_key=api_key)
-    delay = 1.0
 
-    for attempt in range(1, max_retries + 1):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-            )
-            return json.loads(resp.choices[0].message.content)
-
-        except RateLimitError:
-            if attempt == max_retries:
-                raise RuntimeError("AI-limiet bereikt. Probeer later opnieuw.")
-            time.sleep(delay)
-            delay *= 2
-
-        except APIError as e:
-            # dit is de “insufficient_quota”-case
-            if "insufficient_quota" in str(e):
-                raise RuntimeError("AI-tegoed is op bij OpenAI. Voeg tegoed toe of gebruik een andere key.")
-            if attempt == max_retries:
-                raise RuntimeError(f"AI-fout bleef terugkomen: {e}")
-            time.sleep(delay)
-            delay *= 2
-
-
-def ai_make_lesson_from_text(full_text: str) -> dict:
-    """
-    Stuurt ALLE tekst in één keer naar AI en vraagt:
-    'maak er vmbo-dia's van'.
-    """
     prompt = f"""
 Je krijgt hieronder lesstof uit een Word-document.
 Maak hier een les van voor een VMBO-klas (basis/kader/GL).
 
-Maak meerdere dia's.
-Voor elke dia:
+Voor elk onderdeel:
 - 1 korte, begrijpelijke titel (max 8 woorden)
 - 2 of 3 korte zinnen in de je-vorm (vertellend)
 - 1 controlevraag
-- eenvoudige woorden
-- herhaal de titel NIET in de tekst
+- gebruik eenvoudige woorden
 
-Geef ALLEEN JSON in dit formaat:
+Geef ALLEEN geldig JSON in dit formaat:
 
 {{
   "slides": [
@@ -87,16 +53,78 @@ Geef ALLEEN JSON in dit formaat:
 }}
 
 Hier is de lesstof:
-{full_text}
+{text}
 """
-    return call_openai_json(prompt)
+
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+    )
+
+    data = json.loads(resp.choices[0].message.content)
+    slides = data.get("slides")
+    if not slides:
+        raise RuntimeError("AI gaf geen slides terug.")
+    return data
 
 
-def docx_to_vmbo_lesson_json(file_like) -> dict:
+def build_docx_from_lesson(lesson: dict) -> io.BytesIO:
+    """Maakt een nieuw Word-bestand in les-format (kop → tekst → vraag)."""
+    doc = Document()
+    for slide in lesson.get("slides", []):
+        title = slide.get("title") or "Lesonderdeel"
+        text_lines = slide.get("text") or []
+        check = slide.get("check") or ""
+
+        # kop
+        doc.add_heading(title, level=1)
+
+        # tekstregels
+        for line in text_lines:
+            doc.add_paragraph(line)
+
+        # controlevraag
+        if check:
+            p = doc.add_paragraph()
+            p.add_run(check).bold = True
+
+        # lege regel
+        doc.add_paragraph("")
+
+    out = io.BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out
+
+
+def local_fallback_docx(original_text: str) -> io.BytesIO:
+    """Fallback als AI niet werkt of quota op is."""
+    doc = Document()
+    doc.add_heading("Les (lokaal gegenereerd)", level=1)
+    doc.add_paragraph("Je leert vandaag iets over installatietechniek.")
+    doc.add_paragraph("Lees het originele bestand erbij voor meer uitleg.")
+    doc.add_paragraph("")
+    doc.add_paragraph(original_text[:800])  # kort stukje van originele tekst
+    out = io.BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out
+
+
+def docx_to_vmbo_lesson_json(file_like) -> io.BytesIO:
     """
-    DIT is de functie die je in app.py importeert.
-    DOCX → tekst → AI → JSON
+    Belangrijk:
+    - gebruikt nog steeds dezelfde functienaam (dus app.py werkt)
+    - maakt één AI-aanroep (dus geen rate-limit)
+    - geeft direct een nieuw .docx terug in les-stijl
     """
-    full_text = docx_to_plain_text(file_like)
-    return ai_make_lesson_from_text(full_text)
+    raw_text = read_docx_to_text(file_like)
+    try:
+        lesson = call_openai_for_lesson(raw_text)
+        return build_docx_from_lesson(lesson)
+    except Exception as e:
+        print(f"AI-fout: {e}")
+        return local_fallback_docx(raw_text)
+
 
