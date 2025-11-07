@@ -52,3 +52,10 @@ with tab2:
         )
     else:
         st.info("Upload een .docx-bestand om een AI-dia te genereren.")
+
+try:
+    pptx_bytes = docx_to_pptx_hybrid(uploaded_file)
+    # laten downloaden / tonen
+except Exception as e:
+    st.error(f"AI kon geen les maken: {e}")
+
