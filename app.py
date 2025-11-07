@@ -2,6 +2,8 @@ import streamlit as st
 from html_converter import docx_to_html
 from pptx_converter_hybrid import docx_to_pptx_hybrid
 from lesson_from_docx import docx_to_vmbo_lesson_json  # ← dit is de “eerst-analyseren” stap
+from lesson_from_docx import docx_to_vmbo_lesson_json
+
 
 st.set_page_config(page_title="Triade DOCX Tools", page_icon="📘", layout="wide")
 
