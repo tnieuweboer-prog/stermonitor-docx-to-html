@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import json
 from copy import deepcopy
 
@@ -13,22 +14,27 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 # =========================================================
 # CONFIG
 # =========================================================
-BASE_TEMPLATE_NAME = "basis layout.pptx"   # verwacht in /templates
+BASE_TEMPLATE_NAME = "basis layout.pptx"   # /templates/basis layout.pptx
 LOCAL_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
 
 # =========================================================
-# 1. AI-helper: maak VMBO-lesblok
+# HULP: zinnen uit tekst
 # =========================================================
-def ai_vmbo_block_from_text(raw_text):
-    """
-    Maakt van willekeurige technische tekst een vmbo-lesblok:
-    {
-      "title": "pakkende titel",
-      "text": ["zin 1", "zin 2", "zin 3"],
-      "check": "vraag ..."
-    }
-    """
+def split_into_sentences(text: str) -> list[str]:
+    text = (text or "").strip()
+    if not text:
+        return []
+    # heel simpele zin-split
+    parts = re.split(r"[\.!\?]\s+", text)
+    parts = [p.strip(" .?!") for p in parts if p.strip()]
+    return parts
+
+
+# =========================================================
+# 1. AI-helper: vmbo-lesblok
+# =========================================================
+def ai_vmbo_block_from_text(raw_text: str) -> dict:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return fallback_vmbo_block(raw_text)
@@ -39,26 +45,19 @@ def ai_vmbo_block_from_text(raw_text):
 
         prompt = f"""
 Je bent docent installatietechniek op een vmbo-school (basis/kader/GL).
-Je krijgt hieronder een ruwe, technische tekst.
+Je krijgt een stukje technische tekst.
 
-Zet dit om naar lesmateriaal voor 1 dia.
+Maak hiervan lesmateriaal voor 1 dia.
 
-Regels:
-- Schrijf 1 korte, pakkende titel (max 6 woorden) die duidelijk is voor vmbo-leerlingen.
-- Schrijf 3 korte, vertellende zinnen in de je-vorm.
-- Schrijf 1 check-vraag die past bij de uitleg.
-- Gebruik eenvoudige woorden.
-- Geef ALLEEN geldige JSON zoals hieronder.
-
-Voorbeeld:
+- schrijf 1 pakkende vmbo-titel (max 6 woorden)
+- schrijf 3 korte zinnen in je-vorm
+- schrijf 1 inhoudelijke controlevraag
+- gebruik eenvoudige woorden
+- geef alleen JSON in dit formaat:
 {{
-  "title": "Afvoer rustig aansluiten",
-  "text": [
-    "Je maakt de bochten niet te scherp.",
-    "Zo kan het water en de lucht er goed door.",
-    "Dan krijg je minder kans op verstopping."
-  ],
-  "check": "Waarom is een rustige bocht beter?"
+  "title": "...",
+  "text": ["...", "...", "..."],
+  "check": "..."
 }}
 
 Tekst:
@@ -82,72 +81,88 @@ Tekst:
             "text": text_lines,
             "check": check,
         }
-
     except Exception:
-        # als er iets mis gaat met de API, gebruik fallback
         return fallback_vmbo_block(raw_text)
 
 
-def fallback_vmbo_block(raw_text):
-    """Fallback als er geen AI is."""
+# =========================================================
+# 2. Slimmere fallback (als er geen AI is)
+# =========================================================
+def fallback_vmbo_block(raw_text: str) -> dict:
     raw_text = (raw_text or "").strip()
-    if not raw_text:
-        return {
-            "title": "Lesonderdeel",
-            "text": [
-                "Je leert hier een stap uit de installatie.",
-                "Lees mee en kijk wat je moet doen.",
-                "Vraag om hulp als je het niet snapt."
-            ],
-            "check": "Waarom doe je deze stap zo?"
-        }
 
-    # titel: eerste zin, max 6 woorden
-    first_sentence = raw_text.split(".")[0].strip()
-    words = first_sentence.split()
-    if len(words) > 6:
-        first_sentence = " ".join(words[:6])
-    title = first_sentence or "Lesonderdeel"
+    # zinnen halen
+    sentences = split_into_sentences(raw_text)
+
+    # titel maken: eerste zin inkorten
+    if sentences:
+        first = sentences[0]
+        words = first.split()
+        # bv. "Aansluiting op liggende leiding" / "Leiding niet vernauwen"
+        title = " ".join(words[:6]).capitalize()
+    else:
+        title = "Lesonderdeel"
+
+    # 3 vertelzinnen maken
+    text_lines = []
+    for s in sentences[:3]:
+        # wat vriendelijker maken
+        s = s.replace("men ", "je ")
+        s = s.replace("Men ", "Je ")
+        if not s.lower().startswith("je "):
+            s = "Je " + s[0].lower() + s[1:]
+        text_lines.append(s)
+
+    if not text_lines:
+        text_lines = [
+            "Je leert hier een stap uit de installatie.",
+            "Lees mee met je docent.",
+            "Let op wat er niet mag.",
+        ]
+
+    # check-vraag maken op basis van de eerste zin
+    if sentences:
+        first = sentences[0].lower()
+        if "niet" in first or "mag" in first or "nooit" in first:
+            check = "Waarom mag je dit niet zo aansluiten?"
+        elif "bocht" in first or "leiding" in first:
+            check = "Wat gebeurt er als je dit verkeerd doet?"
+        else:
+            check = "Kun je uitleggen waarom je dit zo doet?"
+    else:
+        check = "Wat is hier het belangrijkste?"
 
     return {
         "title": title,
-        "text": [
-            "Je gaat dit onderdeel leren.",
-            "Kijk goed naar de volgorde.",
-            "Zo voorkom je fouten."
-        ],
-        "check": "Wat is hier het belangrijkste?"
+        "text": text_lines,
+        "check": check,
     }
 
 
 # =========================================================
-# 2. DOCX analyseren → tekstblokken
+# 3. DOCX analyseren → tekstblokken
 # =========================================================
-def plain_para_text(para):
+def plain_para_text(para) -> str:
     return "".join(r.text for r in para.runs if r.text).strip()
 
 
-def para_is_heading_like(para):
+def para_is_heading_like(para) -> bool:
     txt = plain_para_text(para)
     if not txt:
         return False
     # echte heading
     if para.style and para.style.name and para.style.name.lower().startswith("heading"):
         return True
-    # vet?
+    # vet
     if any(r.bold for r in para.runs):
         return True
-    # ALL CAPS en kort
+    # ALL CAPS kort
     if len(txt) <= 50 and txt.upper() == txt:
         return True
     return False
 
 
-def docx_to_raw_blocks(doc):
-    """
-    Maak een lijst met tekstblokken uit een willekeurig Word-bestand.
-    Elke 'heading-achtige' paragraaf start een nieuw blok.
-    """
+def docx_to_raw_blocks(doc: Document) -> list[str]:
     blocks = []
     current = []
 
@@ -173,7 +188,7 @@ def docx_to_raw_blocks(doc):
 
 
 # =========================================================
-# 3. template helpers
+# 4. Template helpers
 # =========================================================
 def get_logo_bytes():
     if os.path.exists(LOCAL_LOGO_PATH):
@@ -192,38 +207,21 @@ def add_logo(slide, logo_bytes):
 
 
 def get_positions_from_first_slide(slide):
-    """
-    probeer posities van titel en tekst uit jouw template-dia te halen
-    """
     text_shapes = [s for s in slide.shapes if hasattr(s, "text") and s.text and s.text.strip()]
     if len(text_shapes) >= 2:
         t, b = text_shapes[0], text_shapes[1]
         return {
-            "title": {
-                "left": t.left,
-                "top": t.top,
-                "width": t.width,
-                "height": t.height,
-            },
-            "body": {
-                "left": b.left,
-                "top": b.top,
-                "width": b.width,
-                "height": b.height,
-            },
+            "title": {"left": t.left, "top": t.top, "width": t.width, "height": t.height},
+            "body": {"left": b.left, "top": b.top, "width": b.width, "height": b.height},
         }
-    # fallback posities
+    # fallback
     return {
         "title": {"left": Inches(0.6), "top": Inches(0.8), "width": Inches(9), "height": Inches(0.8)},
-        "body": {"left": Inches(0.6), "top": Inches(3.4), "width": Inches(11.5), "height": Inches(2.2)},
+        "body": {"left": Inches(0.6), "top": Inches(3.4), "width": Inches(11.5), "height": Inches(2)},
     }
 
 
-def duplicate_slide_clean(prs, slide_index):
-    """
-    Kloon een dia en maak alle tekst leeg.
-    Gelinkte plaatjes uit template slaan we over.
-    """
+def duplicate_slide_clean(prs: Presentation, slide_index: int):
     source = prs.slides[slide_index]
     dest = prs.slides.add_slide(prs.slide_layouts[0])
 
@@ -233,7 +231,6 @@ def duplicate_slide_clean(prs, slide_index):
         new_el = deepcopy(shp.element)
         dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
 
-    # nu alle tekst leeg
     for shp in dest.shapes:
         if hasattr(shp, "text_frame"):
             shp.text_frame.clear()
@@ -241,7 +238,7 @@ def duplicate_slide_clean(prs, slide_index):
     return dest
 
 
-def place_title(slide, text, pos):
+def place_title(slide, text: str, pos: dict):
     box = slide.shapes.add_textbox(pos["left"], pos["top"], pos["width"], pos["height"])
     tf = box.text_frame
     tf.text = text
@@ -253,14 +250,12 @@ def place_title(slide, text, pos):
             r.font.color.rgb = RGBColor(0, 0, 0)
 
 
-def place_vmbo_text(slide, lines, check, pos):
-    """
-    Zet 3 vertelzinnen onder elkaar en dan een lege regel en dan de vraag.
-    """
+def place_vmbo_text(slide, lines: list[str], check: str, pos: dict):
     box = slide.shapes.add_textbox(pos["left"], pos["top"], pos["width"], pos["height"])
     tf = box.text_frame
     tf.word_wrap = True
 
+    # vertelzinnen
     first = True
     for line in lines:
         line = line.strip()
@@ -270,11 +265,11 @@ def place_vmbo_text(slide, lines, check, pos):
         p.text = line
         first = False
 
-    # lege regel tussen tekst en vraag
-    blank_p = tf.add_paragraph()
-    blank_p.text = ""
+    # lege regel
+    blank = tf.add_paragraph()
+    blank.text = ""
 
-    # check-vraag
+    # vraag
     if check:
         p = tf.add_paragraph()
         p.text = check
@@ -293,10 +288,10 @@ def place_vmbo_text(slide, lines, check, pos):
 
 
 # =========================================================
-# 4. MAIN
+# 5. MAIN
 # =========================================================
 def docx_to_pptx_hybrid(file_like):
-    # template inladen
+    # template
     base_dir = os.path.dirname(__file__)
     template_path = os.path.join(base_dir, "templates", BASE_TEMPLATE_NAME)
     if os.path.exists(template_path):
@@ -304,22 +299,22 @@ def docx_to_pptx_hybrid(file_like):
     else:
         prs = Presentation()
 
-    # docx lezen
+    # docx → blokken
     doc = Document(file_like)
     raw_blocks = docx_to_raw_blocks(doc)
 
     # logo
     logo_bytes = get_logo_bytes()
 
-    # zorg dat we iig 1 dia hebben
+    # minstens 1 dia
     if len(prs.slides) == 0:
         prs.slides.add_slide(prs.slide_layouts[0])
     first_slide = prs.slides[0]
 
-    # posities
+    # posities uit dia 1
     positions = get_positions_from_first_slide(first_slide)
 
-    # eerste dia leegmaken
+    # dia 1 leegmaken
     for shp in first_slide.shapes:
         if hasattr(shp, "text_frame"):
             shp.text_frame.clear()
@@ -343,7 +338,6 @@ def docx_to_pptx_hybrid(file_like):
         place_title(slide, lesson["title"], positions["title"])
         place_vmbo_text(slide, lesson["text"], lesson["check"], positions["body"])
 
-    # output
     out = io.BytesIO()
     prs.save(out)
     out.seek(0)
