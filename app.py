@@ -2,6 +2,9 @@ import streamlit as st
 from html_converter import docx_to_html
 from pptx_converter_hybrid import docx_to_pptx_hybrid  # ← met een “t”
 from lesson_from_docx import docx_to_vmbo_lesson_json  # ← de AI-analyse stap
+import sys, os
+sys.path.append(os.path.dirname(__file__))
+
 
 
 st.set_page_config(page_title="Triade DOCX Tools", page_icon="📘", layout="wide")
