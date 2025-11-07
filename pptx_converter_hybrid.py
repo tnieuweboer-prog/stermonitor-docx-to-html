@@ -9,21 +9,20 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 
-# =========================
+# =========================================================
 # CONFIG
-# =========================
+# =========================================================
 BASE_TEMPLATE_NAME = "basis layout.pptx"
 LOCAL_LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.png")
 
 
-# =========================
-# DOCX → blokken (kop + tekst)
-# =========================
+# =========================================================
+# DOCX → blokken
+# =========================================================
 def docx_to_blocks(doc: Document):
     """
-    Leest een willekeurig Word-bestand en maakt blokken:
-    [{"title": "...", "body": "...."}, ...]
-    Kop = heading / vet / ALL CAPS.
+    We pakken heading/vet/ALL CAPS als kop.
+    Alles eronder hoort bij die kop.
     """
     blocks = []
     current_title = None
@@ -41,7 +40,6 @@ def docx_to_blocks(doc: Document):
         )
 
         if is_heading:
-            # oud blok wegschrijven
             if current_title or current_body:
                 blocks.append({
                     "title": current_title,
@@ -58,80 +56,81 @@ def docx_to_blocks(doc: Document):
             "body": "\n".join(current_body).strip()
         })
 
-    # echt niks? dan liever error later
     return blocks
 
 
-# =========================
+# =========================================================
 # AI → vmbo-lesblok
-# =========================
+# =========================================================
 def ai_vmbo_block_from_text(raw_text: str) -> dict:
     """
-    Vraagt AI om een didactisch blok te maken.
-    Als AI ontbreekt of leeg antwoord → raise.
+    Roept OpenAI aan. Als er een rate limit of iets anders misgaat,
+    gooien we een duidelijke fout zodat de app een melding kan tonen.
     """
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("Geen OPENAI_API_KEY ingesteld voor lesgeneratie.")
+        raise RuntimeError("Geen OPENAI_API_KEY ingesteld. Zet je sleutel in de omgeving.")
 
-    from openai import OpenAI
+    from openai import OpenAI, RateLimitError
+
     client = OpenAI(api_key=api_key)
 
     prompt = f"""
 Je bent docent installatietechniek op een vmbo-school (basis/kader/GL).
-Je krijgt een stukje ruwe tekst uit een sanitair/riolering les.
+Maak van de onderstaande tekst 1 dia.
 
-Maak hier 1 dia van voor een lespresentatie.
-
-Regels:
-- Schrijf 1 duidelijke, begrijpelijke titel (max 8 woorden).
-- De titel mag NIET letterlijk in de tekst terugkomen.
-- Schrijf 2 of 3 korte, vertellende zinnen in de je-vorm.
-- Sluit af met 1 controlevraag die past bij de uitleg.
+Eisen:
+- 1 duidelijke vmbo-titel (max 8 woorden). Niet letterlijk de eerste regel herhalen.
+- 2 of 3 korte vertellende zinnen in de je-vorm.
+- 1 controlevraag die past bij deze uitleg.
 - Gebruik eenvoudige woorden.
-- Geef ALLEEN geldige JSON in dit formaat:
 
+Geef ALLEEN JSON in dit formaat:
 {{
-  "title": "goede vmbo titel",
-  "text": ["...", "...", "..."],
-  "check": "..."
+  "title": "goede titel",
+  "text": ["zin 1", "zin 2", "zin 3"],
+  "check": "vraag ..."
 }}
 
 Tekst:
 {raw_text}
 """
 
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-    )
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+    except RateLimitError:
+        # hier GEEN fallback meer, dit wil je juist zien in je app
+        raise RuntimeError("AI-limiet bereikt bij OpenAI. Probeer het zo nog een keer.")
+    except Exception as e:
+        raise RuntimeError(f"AI kon geen lesblok maken: {e}")
 
+    # nu proberen te parsen
     try:
         data = json.loads(resp.choices[0].message.content)
     except Exception:
-        raise ValueError("AI gaf geen geldig JSON terug.")
+        raise RuntimeError("AI gaf geen geldig JSON terug.")
 
     title = (data.get("title") or "").strip()
-    text_lines = [t.strip() for t in data.get("text") or [] if t.strip()]
+    text_lines = [t.strip() for t in (data.get("text") or []) if t.strip()]
     check = (data.get("check") or "").strip()
 
     if not title or not text_lines:
-        raise ValueError("AI gaf onvoldoende inhoud terug voor de dia.")
-
-    # max 3 zinnen
-    text_lines = text_lines[:3]
+        raise RuntimeError("AI gaf te weinig inhoud terug voor deze dia.")
 
     return {
         "title": title,
-        "text": text_lines,
-        "check": check or "Leg in je eigen woorden uit waarom dit zo moet."
+        "text": text_lines[:3],
+        "check": check or "Leg uit waarom je dit zo moet doen."
     }
 
 
-# =========================
-# Template helpers
-# =========================
+# =========================================================
+# Template / PPTX helpers
+# =========================================================
 def get_logo_bytes():
     if os.path.exists(LOCAL_LOGO_PATH):
         with open(LOCAL_LOGO_PATH, "rb") as f:
@@ -149,7 +148,6 @@ def add_logo(slide, logo_bytes):
 
 
 def get_positions_from_first_slide(slide):
-    # probeer 2 tekstvormen te vinden
     text_shapes = [s for s in slide.shapes if hasattr(s, "text") and s.text and s.text.strip()]
     if len(text_shapes) >= 2:
         t, b = text_shapes[0], text_shapes[1]
@@ -167,14 +165,17 @@ def get_positions_from_first_slide(slide):
 def duplicate_slide_clean(prs: Presentation, slide_index: int):
     src = prs.slides[slide_index]
     dest = prs.slides.add_slide(prs.slide_layouts[0])
+
     for shp in src.shapes:
         if shp.shape_type == MSO_SHAPE_TYPE.PICTURE:
             continue
         new_el = deepcopy(shp.element)
         dest.shapes._spTree.insert_element_before(new_el, "p:extLst")
+
     for shp in dest.shapes:
         if hasattr(shp, "text_frame"):
             shp.text_frame.clear()
+
     return dest
 
 
@@ -220,9 +221,9 @@ def place_vmbo_text(slide, lines: list[str], check: str, pos: dict):
                 r.font.color.rgb = RGBColor(0, 0, 0)
 
 
-# =========================
+# =========================================================
 # MAIN
-# =========================
+# =========================================================
 def docx_to_pptx_hybrid(file_like):
     # template
     base_dir = os.path.dirname(__file__)
@@ -233,8 +234,8 @@ def docx_to_pptx_hybrid(file_like):
     doc = Document(file_like)
     blocks = docx_to_blocks(doc)
     if not blocks:
-        # hier meteen stoppen → app kan melding tonen
-        raise ValueError("Kon geen onderdelen in het Word-bestand vinden.")
+        # niks zinnigs uit docx
+        raise RuntimeError("Er zijn geen onderdelen gevonden in het Word-bestand.")
 
     # logo
     logo_bytes = get_logo_bytes()
@@ -246,25 +247,25 @@ def docx_to_pptx_hybrid(file_like):
 
     positions = get_positions_from_first_slide(first_slide)
 
-    # eerste dia leegmaken
+    # dia 1 leegmaken
     for shp in first_slide.shapes:
         if hasattr(shp, "text_frame"):
             shp.text_frame.clear()
     if logo_bytes:
         add_logo(first_slide, logo_bytes)
 
-    # eerste blok met AI
+    # eerste blok → AI
     first_block = blocks[0]
-    lesson = ai_vmbo_block_from_text(first_block["body"] or first_block["title"] or "")
+    lesson = ai_vmbo_block_from_text(first_block.get("body") or first_block.get("title") or "")
     place_title(first_slide, lesson["title"], positions["title"])
     place_vmbo_text(first_slide, lesson["text"], lesson["check"], positions["body"])
 
-    # rest van de blokken
+    # volgende blokken
     for block in blocks[1:]:
         slide = duplicate_slide_clean(prs, 0)
         if logo_bytes:
             add_logo(slide, logo_bytes)
-        lesson = ai_vmbo_block_from_text(block["body"] or block["title"] or "")
+        lesson = ai_vmbo_block_from_text(block.get("body") or block.get("title") or "")
         place_title(slide, lesson["title"], positions["title"])
         place_vmbo_text(slide, lesson["text"], lesson["check"], positions["body"])
 
