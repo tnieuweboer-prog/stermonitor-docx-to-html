@@ -1,26 +1,60 @@
 import os
 import sys
+import io
+import requests
 from io import BytesIO
-
 import streamlit as st
 from docx import Document
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
-# zorg dat we modules in dezelfde map kunnen importeren
+# ---------------- CONFIG & IMPORTS ----------------
 sys.path.append(os.path.dirname(__file__))
 
 from html_converter import docx_to_html
 from pptx_converter_hybrid import docx_to_pptx_hybrid
 
-# LES-AI (optioneel): deze maakt een les-Word via AI als lesson_from_docx.py bestaat
+# Les-analyse module (optioneel)
 LESSON_ANALYZER_ERROR = None
 try:
-    from lesson_from_docx import docx_to_vmbo_lesson_json  # deze geeft een DOCX (BytesIO) terug
+    from lesson_from_docx import docx_to_vmbo_lesson_json
     HAS_LESSON_ANALYZER = True
 except Exception as e:
     HAS_LESSON_ANALYZER = False
     LESSON_ANALYZER_ERROR = str(e)
 
+# Cloudinary config
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
+    secure=True,
+)
 
+
+def upload_image_to_cloudinary(file_obj, folder="werkboekjes"):
+    """Uploadt afbeelding en geeft (url, public_id) terug."""
+    resp = cloudinary.uploader.upload(file_obj, folder=folder)
+    return resp["secure_url"], resp["public_id"]
+
+
+def delete_from_cloudinary(public_id):
+    """Verwijdert afbeelding na gebruik."""
+    try:
+        cloudinary.uploader.destroy(public_id)
+    except Exception:
+        pass  # als opruimen mislukt is dat niet fataal
+
+
+def download_image(url: str) -> bytes:
+    """Haalt afbeelding op als bytes (voor in docx)."""
+    r = requests.get(url)
+    r.raise_for_status()
+    return r.content
+
+
+# ---------------- STREAMLIT UI ----------------
 st.set_page_config(page_title="Triade DOCX Tools", page_icon="📘", layout="wide")
 st.title("📘 Triade DOCX Tools")
 
@@ -59,11 +93,11 @@ with tab1:
 
 
 # ==========================================================
-# TAB 2: DOCX → PowerPoint én (optioneel) les-Word via AI
+# TAB 2: DOCX → PowerPoint en Les-Word
 # ==========================================================
 with tab2:
     st.subheader("DOCX → PowerPoint (AI) / Les-Word")
-    st.caption("Maak een PowerPoint in jouw layout, of laat AI eerst een les-Word in VMBO-stijl maken.")
+    st.caption("Maak een PowerPoint in jouw layout of een les-Word in VMBO-stijl.")
 
     uploaded_ai = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="hybrid_upload")
 
@@ -76,13 +110,12 @@ with tab2:
     if uploaded_ai:
         col1, col2 = st.columns(2)
 
-        # --------- les-Word maken (als module aanwezig is) ----------
+        # -------- Les-Word maken via AI --------
         with col1:
             st.markdown("**Les-Word laten maken (AI)**")
-            st.caption("Maakt een nieuw .docx in les-format (kop, uitleg, vraag).")
             if st.button("📝 Maak les-Word"):
                 if not HAS_LESSON_ANALYZER:
-                    st.error("Les-generatie is niet beschikbaar.")
+                    st.error("Les-generatie niet beschikbaar.")
                 else:
                     with st.spinner("Les wordt door AI opgebouwd..."):
                         try:
@@ -98,10 +131,9 @@ with tab2:
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             )
 
-        # --------- PowerPoint maken ----------
+        # -------- PowerPoint maken --------
         with col2:
             st.markdown("**PowerPoint maken in vaste layout**")
-            st.caption("Gebruikt je basis PowerPoint-template.")
             if st.button("📽️ Maak PowerPoint"):
                 with st.spinner("PowerPoint wordt opgebouwd..."):
                     try:
@@ -127,10 +159,10 @@ with tab3:
     st.subheader("📘 Werkboekje generator")
     st.caption(
         "Maak een werkboekje met voorpagina en daarna losse stappen. "
-        "Je kunt per stap kiezen hoeveel afbeeldingen/teksten je wilt."
+        "Elke stap kan 1, 2 of 3 afbeeldingen en tekstblokken hebben."
     )
 
-    # --- algemene info ---
+    # Algemene info
     col_a, col_b = st.columns(2)
     with col_a:
         wb_docent = st.text_input("Docent", key="wb_docent")
@@ -138,7 +170,7 @@ with tab3:
     with col_b:
         wb_cover = st.file_uploader("Omslag-afbeelding (optioneel)", type=["png", "jpg", "jpeg"], key="wb_cover")
 
-    # --- init stappen in session_state ---
+    # Init lijst met stappen
     if "wb_steps" not in st.session_state:
         st.session_state.wb_steps = []
 
@@ -146,14 +178,12 @@ with tab3:
 
     if st.button("➕ Nieuwe stap"):
         st.session_state.wb_steps.append(
-            {
-                "layout": "1 afbeelding + tekst",
-            }
+            {"layout": "1 afbeelding + tekst"}
         )
 
-    # stappen tonen/bewerken
+    # Elke stap
     for idx, _ in enumerate(st.session_state.wb_steps):
-        st.markdown(f"#### Stap {idx+1}")
+        st.markdown(f"#### Stap {idx + 1}")
 
         layout = st.selectbox(
             "Kies layout",
@@ -162,65 +192,65 @@ with tab3:
         )
         title = st.text_input("Titel van deze stap", key=f"wb_title_{idx}")
 
-        # bepaal hoeveel blokken we laten zien
-        if layout.startswith("1"):
-            max_blocks = 1
-        elif layout.startswith("2"):
-            max_blocks = 2
-        else:
-            max_blocks = 3
+        # aantal blokken bepalen
+        max_blocks = int(layout[0])
 
         for i in range(max_blocks):
             st.markdown(f"**Blok {i+1}**")
-            st.file_uploader(
-                f"Afbeelding {i+1}",
-                type=["png", "jpg", "jpeg"],
-                key=f"wb_img_{idx}_{i}",
-            )
+            st.file_uploader(f"Afbeelding {i+1}", type=["png", "jpg", "jpeg"], key=f"wb_img_{idx}_{i}")
             st.text_area(f"Tekst {i+1}", key=f"wb_txt_{idx}_{i}")
-
         st.divider()
 
-    # --- werkboekje genereren als docx ---
+    # Werkboekje genereren
     if st.button("📄 Maak werkboekje (DOCX)"):
         doc = Document()
 
-        # voorpagina
+        # Voorpagina
         if wb_project:
             doc.add_heading(wb_project, level=0)
         if wb_docent:
             doc.add_paragraph(f"Docent: {wb_docent}")
         doc.add_paragraph(" ")
 
-        # (optioneel: wb_cover hier invoegen met doc.add_picture if you want)
+        uploaded_public_ids = []
 
-        # stappen
         for idx, _ in enumerate(st.session_state.wb_steps):
-            doc.add_heading(f"Stap {idx+1}", level=1)
+            doc.add_heading(f"Stap {idx + 1}", level=1)
             titel = st.session_state.get(f"wb_title_{idx}", "")
             if titel:
                 doc.add_paragraph(titel)
 
             layout = st.session_state.get(f"wb_layout_{idx}", "1 afbeelding + tekst")
-            if layout.startswith("1"):
-                max_blocks = 1
-            elif layout.startswith("2"):
-                max_blocks = 2
-            else:
-                max_blocks = 3
+            max_blocks = int(layout[0])
 
             for i in range(max_blocks):
+                img_file = st.session_state.get(f"wb_img_{idx}_{i}")
                 txt = st.session_state.get(f"wb_txt_{idx}_{i}", "")
+
+                # Upload naar Cloudinary
+                if img_file is not None:
+                    url, public_id = upload_image_to_cloudinary(img_file)
+                    uploaded_public_ids.append(public_id)
+
+                    # Download en toevoegen
+                    img_bytes = download_image(url)
+                    doc.add_picture(io.BytesIO(img_bytes), width=None)
+
                 if txt:
                     doc.add_paragraph(txt)
 
             doc.add_paragraph("")
 
+        # Opslaan
         out = BytesIO()
         doc.save(out)
         out.seek(0)
 
-        st.success("✅ Werkboekje gemaakt.")
+        # Verwijder alle Cloudinary-afbeeldingen ná het genereren
+        for pid in uploaded_public_ids:
+            delete_from_cloudinary(pid)
+
+        st.success("✅ Werkboekje gemaakt en Cloudinary opgeschoond.")
         st.download_button(
             "⬇️ Download werkboekje.docx",
             data=out,
