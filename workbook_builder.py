@@ -2,6 +2,7 @@ import io
 from docx import Document
 from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
 
@@ -51,12 +52,14 @@ def add_materiaalstaat_page(doc: Document, materialen: list[dict]):
     for idx, col_name in enumerate(cols):
         cell = hdr_cells[idx]
         cell.text = col_name
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
         for p in cell.paragraphs:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for r in p.runs:
                 r.font.bold = True
                 r.font.name = "Arial"
                 r.font.size = Pt(12)
-        # Zet achtergrondkleur lichtgrijs voor header
+        # Lichtgrijze achtergrond voor header
         cell._element.get_or_add_tcPr().append(
             parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls("w")))
         )
@@ -66,18 +69,20 @@ def add_materiaalstaat_page(doc: Document, materialen: list[dict]):
         row = table.add_row().cells
         for j, key in enumerate(cols):
             value = item.get(key, "")
-            row[j].text = value
-            for p in row[j].paragraphs:
+            cell = row[j]
+            cell.text = value
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            for p in cell.paragraphs:
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 for r in p.runs:
                     r.font.name = "Arial"
                     r.font.size = Pt(12)
-        # verhoog rijhoogte
+        # Rijhoogte verdubbelen
         tr = row[0]._tc.getparent()
         trPr = tr.get_or_add_trPr()
         trHeight = parse_xml(r'<w:trHeight {} w:val="600"/>'.format(nsdecls("w")))
         trPr.append(trHeight)
 
-    # Extra witruimte na tabel
     _p(doc, "")
     _p(doc, "")
 
@@ -145,6 +150,7 @@ def add_cover_page(
 
     for row in table.rows:
         for cell in row.cells:
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
             for p in cell.paragraphs:
                 for r in p.runs:
                     r.font.name = "Arial"
@@ -202,4 +208,5 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
     doc.save(out)
     out.seek(0)
     return out
+
 
