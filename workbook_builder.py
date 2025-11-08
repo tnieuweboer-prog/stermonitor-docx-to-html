@@ -1,10 +1,13 @@
 import io
 from docx import Document
-from docx.shared import Pt, Inches
+from docx.shared import Pt, Inches, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 
 
 def _p(doc, text="", bold=False, size=12, align=None):
+    """Snelle paragraaf aanmaker in Arial."""
     p = doc.add_paragraph()
     run = p.add_run(text)
     run.font.name = "Arial"
@@ -16,7 +19,7 @@ def _p(doc, text="", bold=False, size=12, align=None):
 
 
 def add_logo_to_header(section, logo_bytes: bytes):
-    """Voegt het logo rechtsboven toe in de koptekst (100x100px)."""
+    """Voegt logo toe in koptekst (rechtsboven, 100x100px)."""
     header = section.header
     paragraph = header.paragraphs[0]
     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -25,34 +28,66 @@ def add_logo_to_header(section, logo_bytes: bytes):
 
 
 def add_materiaalstaat_page(doc: Document, materialen: list[dict]):
-    """Voegt de materiaalstaat toe (direct na de voorpagina)."""
+    """Voegt een nette materiaalstaatpagina toe, direct na de voorpagina."""
     doc.add_page_break()
-    doc.add_heading("Materiaalstaat", level=1)
 
+    # Kop "Materiaalstaat"
+    title_p = doc.add_paragraph()
+    run = title_p.add_run("Materiaalstaat")
+    run.font.bold = True
+    run.font.name = "Arial"
+    run.font.size = Pt(16)
+
+    # Enter onder de kop
+    _p(doc, "")
+
+    # Kolommen
     cols = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
     table = doc.add_table(rows=1, cols=len(cols))
     table.style = "Table Grid"
 
+    # Header
     hdr_cells = table.rows[0].cells
     for idx, col_name in enumerate(cols):
-        hdr_cells[idx].text = col_name
-        for p in hdr_cells[idx].paragraphs:
+        cell = hdr_cells[idx]
+        cell.text = col_name
+        for p in cell.paragraphs:
             for r in p.runs:
                 r.font.bold = True
                 r.font.name = "Arial"
                 r.font.size = Pt(12)
+        # Zet achtergrondkleur lichtgrijs voor header
+        cell._element.get_or_add_tcPr().append(
+            parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls("w")))
+        )
 
+    # Data rijen
     for item in materialen:
         row = table.add_row().cells
         for j, key in enumerate(cols):
-            row[j].text = item.get(key, "")
-
-    for row in table.rows:
-        for cell in row.cells:
-            for p in cell.paragraphs:
+            value = item.get(key, "")
+            row[j].text = value
+            for p in row[j].paragraphs:
                 for r in p.runs:
                     r.font.name = "Arial"
-                    r.font.size = Pt(11)
+                    r.font.size = Pt(12)
+            # verhoog rijhoogte
+            tr = row[j]._tc.getparent()
+            tr_height = tr.xpath("./w:trPr/w:trHeight")
+            if not tr_height:
+                trPr = tr.get_or_add_trPr()
+                trHeight = parse_xml(r'<w:trHeight {} w:val="600"/>'.format(nsdecls("w")))
+                trPr.append(trHeight)
+
+    # Zorg dat alle rijen iets meer ruimte krijgen
+    for row in table.rows:
+        tr = row._tr
+        trPr = tr.get_or_add_trPr()
+        trHeight = parse_xml(r'<w:trHeight {} w:val="600"/>'.format(nsdecls("w")))
+        trPr.append(trHeight)
+
+    _p(doc, "")
+    _p(doc, "")
 
 
 def add_cover_page(
@@ -66,7 +101,7 @@ def add_cover_page(
     logo: bytes = None,
     cover_bytes: bytes = None,
 ):
-    """Bouwt de voorpagina van het werkboekje."""
+    """Maakt de voorpagina van het werkboekje."""
     if logo:
         add_logo_to_header(doc.sections[0], logo)
 
@@ -122,7 +157,7 @@ def add_cover_page(
 
 
 def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.BytesIO:
-    """Bouwt het volledige werkboekje met:
+    """Bouwt het volledige werkboekje:
     - Voorpagina
     - Optioneel: Materiaalstaat
     - Stappenplan
@@ -140,11 +175,11 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
         cover_bytes=meta.get("cover_bytes"),
     )
 
-    # Materiaalstaat komt direct na de voorpagina
+    # Materiaalstaat
     if meta.get("include_materiaalstaat"):
         add_materiaalstaat_page(doc, meta.get("materialen", []))
 
-    # Dan het stappenplan
+    # Stappen
     if steps:
         doc.add_page_break()
 
