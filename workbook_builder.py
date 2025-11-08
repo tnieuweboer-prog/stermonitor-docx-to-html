@@ -5,7 +5,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 
 def _p(doc, text="", bold=False, size=12, align=None):
-    """klein hulpfunctietje om een paragraaf te maken in Arial."""
+    """Hulpfunctie voor een nette paragraaf in Arial."""
     p = doc.add_paragraph()
     run = p.add_run(text)
     run.font.name = "Arial"
@@ -16,36 +16,51 @@ def _p(doc, text="", bold=False, size=12, align=None):
     return p
 
 
-def add_cover_page(doc: Document, *, vak: str, profieldeel: str, opdracht_nr: str, opdracht_titel: str,
-                   duur: str, docent: str = "", klas: str = ""):
+def _add_logo_in_header(doc: Document, logo_bytes: bytes):
+    """Voegt het Triade-logo (100x100 px) toe aan de koptekst, rechts uitgelijnd."""
+    if not logo_bytes:
+        return
+    section = doc.sections[0]
+    header = section.header
+    paragraph = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = paragraph.add_run()
+    run.add_picture(io.BytesIO(logo_bytes), width=Inches(1.0), height=Inches(1.0))
+
+
+def add_cover_page(doc: Document, *, vak: str, profieldeel: str, opdracht_nr: str,
+                   opdracht_titel: str, duur: str, docent: str = "", klas: str = "",
+                   logo: bytes = None):
     """
-    Maakt de voorkant van het werkboekje zoals jouw voorbeeld:
-    - alles in Arial
-    - velden die jij invult via app.py
+    Bouwt de voorkant van het werkboekje op met vaste layout en Triade-logo in de header.
     """
-    # witregel boven
+    # Voeg logo toe aan header
+    if logo:
+        _add_logo_in_header(doc, logo)
+
+    # witruimte boven
     _p(doc, "")
 
-    # vak (groot, vet, gecentreerd)
+    # Vak (groot, vet, gecentreerd)
     _p(doc, vak, bold=True, size=20, align=WD_ALIGN_PARAGRAPH.CENTER)
 
-    # profieldeel
+    # Profieldeel
     _p(doc, f"Profieldeel: {profieldeel}", size=14, align=WD_ALIGN_PARAGRAPH.CENTER)
 
-    # leeg
+    # lege regel
     _p(doc, "")
 
-    # opdracht
+    # Opdracht
     _p(doc, f"Opdracht {opdracht_nr}:", bold=True, size=14)
     _p(doc, opdracht_titel, bold=True, size=18)
 
-    # duur
+    # Duur
     _p(doc, f"Duur van de opdracht:     {duur}", size=12)
 
-    # leeg
+    # lege regel
     _p(doc, "")
 
-    # naam / klas blokje
+    # Naam / klas tabel
     table = doc.add_table(rows=2, cols=2)
     table.style = "Table Grid"
     hdr_cells = table.rows[0].cells
@@ -55,7 +70,7 @@ def add_cover_page(doc: Document, *, vak: str, profieldeel: str, opdracht_nr: st
     hdr_cells[0].text = "Klas:"
     hdr_cells[1].text = ""
 
-    # alles in Arial zetten
+    # lettertype forceren naar Arial
     for row in table.rows:
         for cell in row.cells:
             for p in cell.paragraphs:
@@ -63,30 +78,19 @@ def add_cover_page(doc: Document, *, vak: str, profieldeel: str, opdracht_nr: st
                     r.font.name = "Arial"
                     r.font.size = Pt(12)
 
-    # extra ruimte
+    # extra ruimte onderaan
     _p(doc, "")
     _p(doc, "")
 
 
 def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.BytesIO:
     """
-    meta = {
-      "vak": "BWI",
-      "profieldeel": "Wonen en interieur",
-      "opdracht_nr": "1",
-      "opdracht_titel": "Wallmen",
-      "duur": "11 x 45 minuten",
-      "docent": "Jan Jansen",
-      "klas": "3B"
-    }
-    steps = [
-      {"title": "Stap 1", "text_blocks": ["..."], "images": [b'...']},
-      ...
-    ]
+    Bouwt het volledige werkboekje (voorkant + stappenpagina's).
+    meta bevat algemene info, steps bevat blokken met tekst en afbeeldingen.
     """
     doc = Document()
 
-    # voorkant
+    # Voorpagina
     add_cover_page(
         doc,
         vak=meta.get("vak", "BWI"),
@@ -96,12 +100,13 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
         duur=meta.get("duur", ""),
         docent=meta.get("docent", ""),
         klas=meta.get("klas", ""),
+        logo=meta.get("logo", None),
     )
 
-    # pagina-einde zodat stappen op nieuwe pagina komen
+    # Nieuwe pagina voor stappen
     doc.add_page_break()
 
-    # stappen
+    # Stappenpagina's
     for i, step in enumerate(steps, start=1):
         doc.add_heading(f"Stap {i}", level=1)
         title = step.get("title") or ""
@@ -109,9 +114,17 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
             _p(doc, title, bold=True, size=12)
         for txt in step.get("text_blocks", []):
             _p(doc, txt, size=11)
-        # afbeeldingen zou je hier kunnen plaatsen, maar die haal jij al op in app.py
 
+        # Voeg eventuele afbeeldingen toe (van Cloudinary)
+        for img_bytes in step.get("images", []):
+            doc.add_picture(io.BytesIO(img_bytes), width=Inches(3.5))
+            _p(doc, "")
+
+        doc.add_page_break()
+
+    # Teruggeven als bestand
     out = io.BytesIO()
     doc.save(out)
     out.seek(0)
     return out
+
