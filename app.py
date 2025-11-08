@@ -146,7 +146,6 @@ with tab2:
 with tab3:
     st.subheader("📘 Werkboekje generator")
 
-    # algemene velden
     col_a, col_b = st.columns(2)
     with col_a:
         wb_vak = st.text_input("Vak (bijv. BWI)", value="BWI", key="wb_vak")
@@ -158,7 +157,6 @@ with tab3:
         wb_klas = st.text_input("Klas", key="wb_klas")
         wb_cover = st.file_uploader("Omslag-afbeelding (komt op voorblad)", type=["png", "jpg", "jpeg"], key="wb_cover")
 
-    # stappenlijst
     if "wb_steps" not in st.session_state:
         st.session_state.wb_steps = []
 
@@ -182,7 +180,7 @@ with tab3:
         st.divider()
 
     if st.button("📄 Maak werkboekje (DOCX)"):
-        # 1. meta maken
+        # meta invullen
         meta = {
             "vak": wb_vak,
             "profieldeel": wb_profieldeel,
@@ -193,17 +191,17 @@ with tab3:
             "klas": wb_klas,
         }
 
-        # logo uit assets
+        # logo
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 meta["logo"] = f.read()
 
-        # cover-upload gewoon doorgeven; de builder mag .read() doen
+        # 🔴 hier gaat het om: upload direct naar bytes
         if wb_cover is not None:
-            meta["cover_upload"] = wb_cover  # niet lezen hier
+            meta["cover_bytes"] = wb_cover.read()
 
-        # 2. stappen verzamelen
+        # stappen + afbeeldingen (via cloudinary)
         uploaded_public_ids = []
         steps = []
         for idx, _ in enumerate(st.session_state.wb_steps):
@@ -219,7 +217,6 @@ with tab3:
                 if txt:
                     text_blocks.append(txt)
                 if img_file is not None:
-                    # deze afbeeldingen gaan nog steeds via cloudinary
                     url, pid = upload_image_to_cloudinary(img_file)
                     uploaded_public_ids.append(pid)
                     img_bytes = download_image(url)
@@ -231,14 +228,12 @@ with tab3:
                 "images": images,
             })
 
-        # 3. document bouwen
         with st.spinner("Werkboekje wordt opgebouwd..."):
             try:
                 docx_bytes = build_workbook_docx_front_and_steps(meta, steps)
             except Exception as e:
                 st.error(f"❌ Fout bij maken werkboekje: {e}")
             else:
-                # cloudinary opruimen
                 for pid in uploaded_public_ids:
                     delete_from_cloudinary(pid)
 
