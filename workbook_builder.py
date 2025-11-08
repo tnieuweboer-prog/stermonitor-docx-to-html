@@ -1,6 +1,6 @@
 import io
 from docx import Document
-from docx.shared import Pt, Inches, Cm
+from docx.shared import Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
@@ -71,21 +71,13 @@ def add_materiaalstaat_page(doc: Document, materialen: list[dict]):
                 for r in p.runs:
                     r.font.name = "Arial"
                     r.font.size = Pt(12)
-            # verhoog rijhoogte
-            tr = row[j]._tc.getparent()
-            tr_height = tr.xpath("./w:trPr/w:trHeight")
-            if not tr_height:
-                trPr = tr.get_or_add_trPr()
-                trHeight = parse_xml(r'<w:trHeight {} w:val="600"/>'.format(nsdecls("w")))
-                trPr.append(trHeight)
-
-    # Zorg dat alle rijen iets meer ruimte krijgen
-    for row in table.rows:
-        tr = row._tr
+        # verhoog rijhoogte
+        tr = row[0]._tc.getparent()
         trPr = tr.get_or_add_trPr()
         trHeight = parse_xml(r'<w:trHeight {} w:val="600"/>'.format(nsdecls("w")))
         trPr.append(trHeight)
 
+    # Extra witruimte na tabel
     _p(doc, "")
     _p(doc, "")
 
@@ -115,15 +107,19 @@ def add_cover_page(
     _p(doc, "")
     _p(doc, vak, bold=True, size=14)
 
+    # Keuze/profieldeel op één regel
     if profieldeel:
+        _p(doc, f"Keuze/profieldeel: {profieldeel}", size=12)
+    else:
         _p(doc, "Keuze/profieldeel:", size=12)
-        _p(doc, profieldeel, size=12)
 
+    # Docent op nieuwe regel
     if docent:
         _p(doc, f"Docent: {docent}", size=12)
     else:
         _p(doc, "Docent:", size=12)
 
+    # Duur van de opdracht
     if duur:
         _p(doc, f"Duur van de opdracht:     {duur}", size=12)
     else:
@@ -131,6 +127,7 @@ def add_cover_page(
 
     _p(doc, "")
 
+    # Afbeelding (cover)
     if cover_bytes:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -138,6 +135,7 @@ def add_cover_page(
         r.add_picture(io.BytesIO(cover_bytes), width=Inches(4.5))
         _p(doc, "")
 
+    # Naam en klas in tabel
     table = doc.add_table(rows=2, cols=2)
     table.style = "Table Grid"
     table.rows[0].cells[0].text = "Naam:"
