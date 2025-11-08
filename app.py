@@ -68,7 +68,7 @@ with tab3:
     st.subheader("📘 Werkboekje-generator")
     st.caption("Voorpagina volgens jouw layout, optioneel materiaalstaat direct na de voorkant, daarna stappen.")
 
-    # ----------------- 1. VOORPAGINA VELDEN (direct, geen form) -----------------
+    # ----------------- 1. VOORPAGINA -----------------
     col1, col2 = st.columns(2)
     with col1:
         wb_opdracht_titel = st.text_input("Opdracht titel")
@@ -81,8 +81,7 @@ with tab3:
 
     st.markdown("---")
 
-    # ----------------- 2. MATERIAALSTAAT (direct zichtbaar na vinkje) -----------------
-    # in state bijhouden hoeveel rijen
+    # ----------------- 2. MATERIAALSTAAT -----------------
     if "num_material_rows" not in st.session_state:
         st.session_state.num_material_rows = 1
 
@@ -96,24 +95,20 @@ with tab3:
         st.markdown("#### Materiaalstaat invullen")
         st.caption("Vul de materialen in. Klik op ➕ voor een extra rij.")
 
-        # header
         headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
-        header_cols = st.columns(len(headers))
-        for i, h in enumerate(headers):
-            header_cols[i].markdown(f"**{h}**")
 
-        # rijen
         for row_idx in range(st.session_state.num_material_rows):
-            cols = st.columns(len(headers))
-            row_data = []
+            cols = st.columns([1, 1, 2, 1, 1, 1, 1])
+            values = []
             for col_idx, h in enumerate(headers):
-                value = cols[col_idx].text_input(
-                    "",
-                    key=f"mat_{h}_{row_idx}",
-                    placeholder=h,
+                values.append(
+                    cols[col_idx].text_input(
+                        label="",  # label verbergen
+                        key=f"mat_{h}_{row_idx}",
+                        placeholder=h,  # placeholder tonen in veld
+                    )
                 )
-                row_data.append(value)
-            materialen.append(dict(zip(headers, row_data)))
+            materialen.append(dict(zip(headers, values)))
 
         st.button("➕ Voeg materiaal toe", on_click=add_material_row)
 
@@ -151,13 +146,13 @@ with tab3:
             "materialen": materialen,
         }
 
-        # logo
+        # logo automatisch laden
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 meta["logo"] = f.read()
 
-        # cover
+        # cover afbeelding (voorblad)
         if wb_cover is not None:
             meta["cover_bytes"] = wb_cover.read()
 
@@ -174,5 +169,4 @@ with tab3:
                     file_name="werkboekje.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
-
 
