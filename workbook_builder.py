@@ -26,23 +26,22 @@ def add_cover_page(
     docent: str = "",
     klas: str = "",
     logo: bytes = None,
-    cover_upload=None,
+    cover_bytes: bytes = None,
 ):
-    # bovenste rij met logo rechts
+    # rij met logo rechts
     if logo:
         tbl = doc.add_table(rows=1, cols=2)
         left_cell, right_cell = tbl.rows[0].cells
-        # links laten we leeg
         p_right = right_cell.paragraphs[0]
         p_right.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        run = p_right.add_run()
-        run.add_picture(io.BytesIO(logo), width=Inches(1.0), height=Inches(1.0))
+        r = p_right.add_run()
+        r.add_picture(io.BytesIO(logo), width=Inches(1.0), height=Inches(1.0))
     else:
         _p(doc, "")
 
     _p(doc, "")
 
-    # hoofdvelden
+    # hoofdtekst
     _p(doc, vak, bold=True, size=20, align=WD_ALIGN_PARAGRAPH.CENTER)
 
     if profieldeel:
@@ -62,26 +61,20 @@ def add_cover_page(
 
     _p(doc, "")
 
-    # geüploade cover-afbeelding (via app.py doorgegeven)
-    if cover_upload is not None:
-        # kan een Streamlit UploadedFile zijn of al bytes
-        if hasattr(cover_upload, "read"):
-            cover_bytes = cover_upload.read()
-        else:
-            cover_bytes = cover_upload
+    # cover-afbeelding (nu gegarandeerd bytes)
+    if cover_bytes:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = p.add_run()
-        r.add_picture(io.BytesIO(cover_bytes), width=Inches(4.5))
+        run = p.add_run()
+        run.add_picture(io.BytesIO(cover_bytes), width=Inches(4.5))
 
     _p(doc, "")
 
-    # invulblokje onderaan
+    # invulblokje
     table = doc.add_table(rows=2, cols=2)
     table.style = "Table Grid"
     table.rows[0].cells[0].text = "Naam:"
     table.rows[1].cells[0].text = "Klas:"
-
     for row in table.rows:
         for cell in row.cells:
             for p in cell.paragraphs:
@@ -103,10 +96,9 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
         docent=meta.get("docent", ""),
         klas=meta.get("klas", ""),
         logo=meta.get("logo"),
-        cover_upload=meta.get("cover_upload"),
+        cover_bytes=meta.get("cover_bytes"),
     )
 
-    # stappen achter de voorkant
     if steps:
         doc.add_page_break()
 
@@ -127,5 +119,4 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
     doc.save(out)
     out.seek(0)
     return out
-
 
