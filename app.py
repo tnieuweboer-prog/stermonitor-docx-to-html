@@ -4,19 +4,18 @@ import io
 import requests
 from io import BytesIO
 import streamlit as st
-from docx import Document
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
 
-# ---------------- CONFIG / IMPORTS ----------------
+# ------------------- imports uit je project -------------------
 sys.path.append(os.path.dirname(__file__))
 
 from html_converter import docx_to_html
 from pptx_converter_hybrid import docx_to_pptx_hybrid
 from workbook_builder import build_workbook_docx_front_and_steps
 
-# optionele AI-les
+# AI-les (optioneel)
 LESSON_ANALYZER_ERROR = None
 try:
     from lesson_from_docx import docx_to_vmbo_lesson_json
@@ -25,7 +24,7 @@ except Exception as e:
     HAS_LESSON_ANALYZER = False
     LESSON_ANALYZER_ERROR = str(e)
 
-# cloudinary
+# ------------------- Cloudinary config -------------------
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
@@ -49,7 +48,7 @@ def download_image(url: str) -> bytes:
     return r.content
 
 
-# ---------------- STREAMLIT UI ----------------
+# ------------------- Streamlit setup -------------------
 st.set_page_config(page_title="Triade DOCX Tools", page_icon="📘", layout="wide")
 st.title("📘 Triade DOCX Tools")
 
@@ -59,11 +58,13 @@ tab1, tab2, tab3 = st.tabs([
     "📘 Werkboekje generator",
 ])
 
-# =========================================================
-# TAB 1: HTML
-# =========================================================
+# =======================================================
+# TAB 1: DOCX → HTML
+# =======================================================
 with tab1:
     st.subheader("DOCX → HTML Converter")
+    st.caption("Zet je Word-lesstof automatisch om naar nette HTML voor Stermonitor of LessonUp.")
+
     uploaded_html = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="html_upload")
 
     if uploaded_html:
@@ -85,23 +86,27 @@ with tab1:
         st.info("Upload een .docx-bestand om te converteren naar HTML.")
 
 
-# =========================================================
-# TAB 2: DOCX → PPTX / Les-Word
-# =========================================================
+# =======================================================
+# TAB 2: DOCX → PowerPoint / Les-Word
+# =======================================================
 with tab2:
     st.subheader("DOCX → PowerPoint (AI) / Les-Word")
+    st.caption("Maak een PowerPoint in jouw layout of een les-Word in VMBO-stijl.")
+
     uploaded_ai = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="hybrid_upload")
 
     if not HAS_LESSON_ANALYZER:
+        msg = "⚠️ De AI-lesmodule (`lesson_from_docx.py`) kon niet worden geladen."
         if LESSON_ANALYZER_ERROR:
-            st.warning(f"⚠️ AI-lesmodule niet geladen: {LESSON_ANALYZER_ERROR}")
-        else:
-            st.warning("⚠️ AI-lesmodule niet geladen.")
+            msg += f"\n\n**Details:** {LESSON_ANALYZER_ERROR}"
+        st.warning(msg)
 
     if uploaded_ai:
         col1, col2 = st.columns(2)
+
+        # --- Les-Word (AI)
         with col1:
-            st.markdown("**Les-Word (AI)**")
+            st.markdown("**Les-Word laten maken (AI)**")
             if st.button("📝 Maak les-Word"):
                 if not HAS_LESSON_ANALYZER:
                     st.error("Les-generatie niet beschikbaar.")
@@ -120,8 +125,9 @@ with tab2:
                                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             )
 
+        # --- PowerPoint
         with col2:
-            st.markdown("**PowerPoint in vaste layout**")
+            st.markdown("**PowerPoint maken in vaste layout**")
             if st.button("📽️ Maak PowerPoint"):
                 with st.spinner("PowerPoint wordt opgebouwd..."):
                     try:
@@ -140,23 +146,25 @@ with tab2:
         st.info("Upload een .docx-bestand om een PowerPoint of les-Word te maken.")
 
 
-# =========================================================
-# TAB 3: Werkboekje
-# =========================================================
+# =======================================================
+# TAB 3: Werkboekje generator
+# =======================================================
 with tab3:
     st.subheader("📘 Werkboekje generator")
+    st.caption("Voorpagina volgens jouw layout, daarna stappen. Leerlingen vullen zelf naam/klas in.")
 
+    # -------- Algemeen (voor op voorkant) --------
     col_a, col_b = st.columns(2)
     with col_a:
-        wb_vak = st.text_input("Vak (bijv. BWI)", value="BWI", key="wb_vak")
-        wb_profieldeel = st.text_input("Profieldeel", key="wb_profieldeel")
         wb_opdracht_titel = st.text_input("Titel van opdracht", key="wb_opdracht_titel")
-        wb_duur = st.text_input("Duur van opdracht", value="11 x 45 minuten", key="wb_duur")
+        wb_vak = st.text_input("Vak (bijv. BWI)", value="BWI", key="wb_vak")
+        wb_profieldeel = st.text_input("Keuze/profieldeel", key="wb_profieldeel")
     with col_b:
         wb_docent = st.text_input("Docent", key="wb_docent")
-        wb_klas = st.text_input("Klas", key="wb_klas")
-        wb_cover = st.file_uploader("Omslag-afbeelding (komt op voorblad)", type=["png", "jpg", "jpeg"], key="wb_cover")
+        wb_duur = st.text_input("Duur van de opdracht", value="11 x 45 minuten", key="wb_duur")
+        # géén klas hier: leerlingen schrijven dat in het boekje
 
+    # -------- Stappen in state --------
     if "wb_steps" not in st.session_state:
         st.session_state.wb_steps = []
 
@@ -179,29 +187,24 @@ with tab3:
             st.text_area(f"Tekst {i+1}", key=f"wb_txt_{idx}_{i}")
         st.divider()
 
+    # -------- Werkboekje maken --------
     if st.button("📄 Maak werkboekje (DOCX)"):
-        # meta invullen
+        # meta voor de builder
         meta = {
+            "opdracht_titel": wb_opdracht_titel,
             "vak": wb_vak,
             "profieldeel": wb_profieldeel,
-            "opdracht_nr": "1",
-            "opdracht_titel": wb_opdracht_titel,
-            "duur": wb_duur,
             "docent": wb_docent,
-            "klas": wb_klas,
+            "duur": wb_duur,
         }
 
-        # logo
+        # logo uit assets
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 meta["logo"] = f.read()
 
-        # 🔴 hier gaat het om: upload direct naar bytes
-        if wb_cover is not None:
-            meta["cover_bytes"] = wb_cover.read()
-
-        # stappen + afbeeldingen (via cloudinary)
+        # stappen + afbeeldingen (die gaan via cloudinary, daarna opruimen)
         uploaded_public_ids = []
         steps = []
         for idx, _ in enumerate(st.session_state.wb_steps):
@@ -234,6 +237,7 @@ with tab3:
             except Exception as e:
                 st.error(f"❌ Fout bij maken werkboekje: {e}")
             else:
+                # cloudinary opschonen
                 for pid in uploaded_public_ids:
                     delete_from_cloudinary(pid)
 
