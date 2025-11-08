@@ -26,7 +26,22 @@ def add_cover_page(
     logo: bytes = None,
     cover_bytes: bytes = None,
 ):
-    # bovenste rij met logo rechts (optioneel)
+    """
+    Layout:
+    Opdracht :
+    <titel>
+
+    <vak>
+    Keuze/profieldeel:
+    Docent: ...
+    Duur van de opdracht: ...
+
+    [optionele afbeelding hier]
+
+    [tabel Naam / Klas]
+    """
+
+    # 1) logo rechtsboven (optioneel)
     if logo:
         tbl = doc.add_table(rows=1, cols=2)
         left_cell, right_cell = tbl.rows[0].cells
@@ -37,26 +52,26 @@ def add_cover_page(
     else:
         _p(doc, "")
 
-    # Opdracht
+    # 2) Opdracht + titel
     _p(doc, "Opdracht :", size=12)
     _p(doc, opdracht_titel, bold=True, size=14)
     _p(doc, "")
 
-    # vak
+    # 3) vak (bijv. BWI)
     _p(doc, vak, bold=True, size=14)
 
-    # Keuze/profieldeel
+    # 4) Keuze/profieldeel
     _p(doc, "Keuze/profieldeel:", size=12)
     if profieldeel:
         _p(doc, profieldeel, size=12)
 
-    # Docent
+    # 5) Docent
     if docent:
         _p(doc, f"Docent: {docent}", size=12)
     else:
         _p(doc, "Docent:", size=12)
 
-    # Duur
+    # 6) Duur
     if duur:
         _p(doc, f"Duur van de opdracht:     {duur}", size=12)
     else:
@@ -64,21 +79,23 @@ def add_cover_page(
 
     _p(doc, "")
 
-    # 🔹 hier: optionele afbeelding op de voorpagina
+    # 7) HIER de afbeelding, maar alleen als je er één hebt geüpload
     if cover_bytes:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         r = p.add_run()
         r.add_picture(io.BytesIO(cover_bytes), width=Inches(4.5))
-        _p(doc, "")  # beetje ruimte na afbeelding
+        _p(doc, "")  # klein beetje ruimte na de foto
 
-    # Naam / Klas in tabel (voor leerlingen)
+    # 8) Tabel Naam / Klas (zoals je vroeg)
     table = doc.add_table(rows=2, cols=2)
     table.style = "Table Grid"
     table.rows[0].cells[0].text = "Naam:"
     table.rows[0].cells[1].text = ""
     table.rows[1].cells[0].text = "Klas:"
     table.rows[1].cells[1].text = ""
+
+    # alles in Arial houden
     for row in table.rows:
         for cell in row.cells:
             for p in cell.paragraphs:
@@ -101,23 +118,29 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
         docent=meta.get("docent", ""),
         duur=meta.get("duur", ""),
         logo=meta.get("logo"),
-        cover_bytes=meta.get("cover_bytes"),  # 👈 hier komt de upload
+        cover_bytes=meta.get("cover_bytes"),  # ← afbeelding staat nu op voorpagina
     )
 
-    # stappen op één pagina onder elkaar
+    # stappen op nieuwe pagina, maar daarna onder elkaar
     if steps:
         doc.add_page_break()
 
+    from docx.shared import Inches  # just in case
+
     for i, step in enumerate(steps, start=1):
         doc.add_heading(f"Stap {i}", level=1)
+
         title = step.get("title") or ""
         if title:
             _p(doc, title, bold=True, size=12)
+
         for txt in step.get("text_blocks", []):
             _p(doc, txt, size=11)
+
         for img_bytes in step.get("images", []):
             doc.add_picture(io.BytesIO(img_bytes), width=Inches(3.5))
             _p(doc, "")
+
         _p(doc, "")
         _p(doc, "")
 
@@ -125,4 +148,5 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
     doc.save(out)
     out.seek(0)
     return out
+
 
