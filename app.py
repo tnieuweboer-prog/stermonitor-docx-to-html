@@ -67,6 +67,13 @@ with tab3:
     st.subheader("📘 Werkboekje-generator (met stappenplan en materiaalstaat)")
     st.caption("Maak eenvoudig een werkboekje in Word met Triade-stijl, logo, omslagfoto en optionele materiaalstaat.")
 
+    # Session state voor aantal materiaalregels
+    if "num_material_rows" not in st.session_state:
+        st.session_state.num_material_rows = 1
+
+    def add_row():
+        st.session_state.num_material_rows += 1
+
     with st.form("workbook_form"):
         col1, col2 = st.columns(2)
         with col1:
@@ -81,20 +88,22 @@ with tab3:
 
         st.markdown("---")
         st.markdown("### 🧱 Materiaalstaat (optioneel)")
-        include_materiaalstaat = st.checkbox("Materiaalstaat toevoegen aan werkboekje")
+        include_materiaalstaat = st.checkbox("Materiaalstaat toevoegen aan werkboekje", key="materiaalstaat_toggle")
 
         materialen = []
         if include_materiaalstaat:
-            st.caption("Voeg materialen toe. Klik op ➕ om extra regels te maken.")
-            num_items = st.number_input("Aantal materialen", min_value=1, max_value=30, value=3, step=1)
-            for i in range(num_items):
-                st.markdown(f"**Materiaal {i + 1}**")
+            st.caption("Vul de materiaalstaat in. Gebruik ➕ om extra regels toe te voegen.")
+            cols_header = st.columns(7)
+            headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
+            for i, h in enumerate(headers):
+                cols_header[i].markdown(f"**{h}**")
+
+            for i in range(st.session_state.num_material_rows):
                 cols = st.columns(7)
-                headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
-                data = []
-                for j, h in enumerate(headers):
-                    data.append(cols[j].text_input(h, key=f"{h}_{i}", value=""))
+                data = [cols[j].text_input("", key=f"{headers[j]}_{i}") for j in range(7)]
                 materialen.append(dict(zip(headers, data)))
+
+            st.form_submit_button("➕ Voeg materiaal toe", on_click=add_row)
 
         st.markdown("---")
         st.markdown("### ➕ Stappen toevoegen")
@@ -110,12 +119,10 @@ with tab3:
             img = st.file_uploader(f"Afbeelding voor stap {i + 1} (optioneel)", type=["png", "jpg", "jpeg"], key=f"img_{i}")
 
             step_data = {"title": title, "text_blocks": [text] if text else []}
-
             if img:
                 step_data["images"] = [img.read()]
             else:
                 step_data["images"] = []
-
             steps.append(step_data)
 
         generate_btn = st.form_submit_button("📘 Werkboekje genereren")
