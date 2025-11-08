@@ -64,8 +64,8 @@ with tab2:
 
 # ---------------- TAB 3: Werkboekjes-generator ----------------
 with tab3:
-    st.subheader("📘 Werkboekje-generator (met stappenplan)")
-    st.caption("Maak eenvoudig een werkboekje in Word met Triade-stijl, logo en optionele omslagfoto.")
+    st.subheader("📘 Werkboekje-generator (met stappenplan en materiaalstaat)")
+    st.caption("Maak eenvoudig een werkboekje in Word met Triade-stijl, logo, omslagfoto en optionele materiaalstaat.")
 
     with st.form("workbook_form"):
         col1, col2 = st.columns(2)
@@ -78,6 +78,23 @@ with tab3:
             wb_duur = st.text_input("Duur van de opdracht (bijv. 3 weken)")
 
         wb_cover = st.file_uploader("📸 Voeg omslagfoto toe (optioneel)", type=["png", "jpg", "jpeg"])
+
+        st.markdown("---")
+        st.markdown("### 🧱 Materiaalstaat (optioneel)")
+        include_materiaalstaat = st.checkbox("Materiaalstaat toevoegen aan werkboekje")
+
+        materialen = []
+        if include_materiaalstaat:
+            st.caption("Voeg materialen toe. Klik op ➕ om extra regels te maken.")
+            num_items = st.number_input("Aantal materialen", min_value=1, max_value=30, value=3, step=1)
+            for i in range(num_items):
+                st.markdown(f"**Materiaal {i + 1}**")
+                cols = st.columns(7)
+                headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
+                data = []
+                for j, h in enumerate(headers):
+                    data.append(cols[j].text_input(h, key=f"{h}_{i}", value=""))
+                materialen.append(dict(zip(headers, data)))
 
         st.markdown("---")
         st.markdown("### ➕ Stappen toevoegen")
@@ -110,15 +127,15 @@ with tab3:
             "profieldeel": wb_profieldeel,
             "docent": wb_docent,
             "duur": wb_duur,
+            "include_materiaalstaat": include_materiaalstaat,
+            "materialen": materialen,
         }
 
-        # Logo laden (altijd rechtsboven)
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 meta["logo"] = f.read()
 
-        # Omslagfoto (cover)
         if wb_cover is not None:
             meta["cover_bytes"] = wb_cover.read()
 
@@ -135,8 +152,4 @@ with tab3:
                     file_name="werkboekje.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
-
-        # tijdelijke bestanden opruimen
-        if wb_cover is not None:
-            del meta["cover_bytes"]
 
