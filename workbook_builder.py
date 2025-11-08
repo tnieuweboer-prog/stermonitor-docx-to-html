@@ -26,37 +26,35 @@ def add_cover_page(
     docent: str = "",
     klas: str = "",
     logo: bytes = None,
-    cover_image: bytes = None,
+    cover_upload=None,
 ):
-    # rij bovenaan met logo rechts
+    # bovenste rij met logo rechts
     if logo:
         tbl = doc.add_table(rows=1, cols=2)
-        left, right = tbl.rows[0].cells
-        right.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        r = right.paragraphs[0].add_run()
-        r.add_picture(io.BytesIO(logo), width=Inches(1.0), height=Inches(1.0))
+        left_cell, right_cell = tbl.rows[0].cells
+        # links laten we leeg
+        p_right = right_cell.paragraphs[0]
+        p_right.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        run = p_right.add_run()
+        run.add_picture(io.BytesIO(logo), width=Inches(1.0), height=Inches(1.0))
     else:
         _p(doc, "")
 
-    _p(doc, "")  # ruimte
+    _p(doc, "")
 
-    # vak
+    # hoofdvelden
     _p(doc, vak, bold=True, size=20, align=WD_ALIGN_PARAGRAPH.CENTER)
 
     if profieldeel:
         _p(doc, f"Profieldeel: {profieldeel}", size=14, align=WD_ALIGN_PARAGRAPH.CENTER)
 
     _p(doc, "")
-
-    # opdracht
     _p(doc, f"Opdracht {opdracht_nr}:", bold=True, size=14)
     _p(doc, opdracht_titel, bold=True, size=18)
 
-    # duur
     if duur:
         _p(doc, f"Duur van de opdracht:     {duur}", size=12)
 
-    # docent / klas
     if docent:
         _p(doc, f"Docent: {docent}", size=12)
     if klas:
@@ -64,21 +62,26 @@ def add_cover_page(
 
     _p(doc, "")
 
-    # hier komt de geüploade cover-afbeelding groot op het voorblad
-    if cover_image:
+    # geüploade cover-afbeelding (via app.py doorgegeven)
+    if cover_upload is not None:
+        # kan een Streamlit UploadedFile zijn of al bytes
+        if hasattr(cover_upload, "read"):
+            cover_bytes = cover_upload.read()
+        else:
+            cover_bytes = cover_upload
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run = p.add_run()
-        # iets groter dan 1 inch, jij kunt ‘m fine-tunen
-        run.add_picture(io.BytesIO(cover_image), width=Inches(4.5))
+        r = p.add_run()
+        r.add_picture(io.BytesIO(cover_bytes), width=Inches(4.5))
 
     _p(doc, "")
 
-    # onderaan invulblokje
+    # invulblokje onderaan
     table = doc.add_table(rows=2, cols=2)
     table.style = "Table Grid"
     table.rows[0].cells[0].text = "Naam:"
     table.rows[1].cells[0].text = "Klas:"
+
     for row in table.rows:
         for cell in row.cells:
             for p in cell.paragraphs:
@@ -100,12 +103,12 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
         docent=meta.get("docent", ""),
         klas=meta.get("klas", ""),
         logo=meta.get("logo"),
-        cover_image=meta.get("cover_image"),
+        cover_upload=meta.get("cover_upload"),
     )
 
-    # stappen
-    doc.add_page_break()
-    from docx.shared import Inches  # if not already imported
+    # stappen achter de voorkant
+    if steps:
+        doc.add_page_break()
 
     for i, step in enumerate(steps, start=1):
         doc.add_heading(f"Stap {i}", level=1)
@@ -124,4 +127,5 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
     doc.save(out)
     out.seek(0)
     return out
+
 
