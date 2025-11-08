@@ -1,5 +1,4 @@
 import os
-import io
 import streamlit as st
 from html_converter import docx_to_html
 from pptx_converter_hybrid import docx_to_pptx_hybrid
@@ -14,11 +13,11 @@ tab1, tab2, tab3 = st.tabs([
     "📘 Werkboekjes-generator"
 ])
 
-# ---------------- TAB 1: HTML Converter ----------------
+# =========================================================
+# TAB 1
+# =========================================================
 with tab1:
     st.subheader("DOCX → HTML Converter")
-    st.caption("Zet je Word-lesstof automatisch om naar nette HTML voor Stermonitor of LessonUp.")
-
     uploaded_html = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="html_upload")
 
     if uploaded_html:
@@ -36,11 +35,11 @@ with tab1:
         st.info("Upload een .docx-bestand om te converteren naar HTML.")
 
 
-# ---------------- TAB 2: AI-Hybride PowerPoint ----------------
+# =========================================================
+# TAB 2
+# =========================================================
 with tab2:
     st.subheader("DOCX → PowerPoint (AI-Hybride)")
-    st.caption("Gebruik de vertrouwde layout uit je klassieke converter, maar laat AI de tekst omzetten naar VMBO-lesvorm.")
-
     uploaded_ai = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="hybrid_upload")
 
     if uploaded_ai:
@@ -62,72 +61,86 @@ with tab2:
         st.info("Upload een .docx-bestand om een AI-dia te genereren.")
 
 
-# ---------------- TAB 3: Werkboekjes-generator ----------------
+# =========================================================
+# TAB 3
+# =========================================================
 with tab3:
-    st.subheader("📘 Werkboekje-generator (met stappenplan en materiaalstaat)")
-    st.caption("Maak eenvoudig een werkboekje in Word met Triade-stijl, logo, omslagfoto en optionele materiaalstaat.")
+    st.subheader("📘 Werkboekje-generator")
+    st.caption("Voorpagina volgens jouw layout, optioneel materiaalstaat direct na de voorkant, daarna stappen.")
 
-    # Session state voor aantal materiaalregels
+    # ----------------- 1. VOORPAGINA VELDEN (direct, geen form) -----------------
+    col1, col2 = st.columns(2)
+    with col1:
+        wb_opdracht_titel = st.text_input("Opdracht titel")
+        wb_vak = st.text_input("Vak (bijv. BWI)", value="BWI")
+        wb_profieldeel = st.text_input("Keuze/profieldeel")
+    with col2:
+        wb_docent = st.text_input("Docent")
+        wb_duur = st.text_input("Duur van de opdracht", value="11 x 45 minuten")
+        wb_cover = st.file_uploader("📸 Omslagfoto (optioneel)", type=["png", "jpg", "jpeg"])
+
+    st.markdown("---")
+
+    # ----------------- 2. MATERIAALSTAAT (direct zichtbaar na vinkje) -----------------
+    # in state bijhouden hoeveel rijen
     if "num_material_rows" not in st.session_state:
         st.session_state.num_material_rows = 1
 
-    def add_row():
+    def add_material_row():
         st.session_state.num_material_rows += 1
 
-    with st.form("workbook_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            wb_opdracht_titel = st.text_input("Opdracht titel")
-            wb_vak = st.text_input("Vak (bijv. BWI)", value="BWI")
-            wb_profieldeel = st.text_input("Keuze/profieldeel")
-        with col2:
-            wb_docent = st.text_input("Docent")
-            wb_duur = st.text_input("Duur van de opdracht (bijv. 3 weken)")
+    include_materiaalstaat = st.checkbox("Materiaalstaat toevoegen aan werkboekje")
 
-        wb_cover = st.file_uploader("📸 Voeg omslagfoto toe (optioneel)", type=["png", "jpg", "jpeg"])
+    materialen = []
+    if include_materiaalstaat:
+        st.markdown("#### Materiaalstaat invullen")
+        st.caption("Vul de materialen in. Klik op ➕ voor een extra rij.")
 
-        st.markdown("---")
-        st.markdown("### 🧱 Materiaalstaat (optioneel)")
-        include_materiaalstaat = st.checkbox("Materiaalstaat toevoegen aan werkboekje", key="materiaalstaat_toggle")
+        # header
+        headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
+        header_cols = st.columns(len(headers))
+        for i, h in enumerate(headers):
+            header_cols[i].markdown(f"**{h}**")
 
-        materialen = []
-        if include_materiaalstaat:
-            st.caption("Vul de materiaalstaat in. Gebruik ➕ om extra regels toe te voegen.")
-            cols_header = st.columns(7)
-            headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
-            for i, h in enumerate(headers):
-                cols_header[i].markdown(f"**{h}**")
+        # rijen
+        for row_idx in range(st.session_state.num_material_rows):
+            cols = st.columns(len(headers))
+            row_data = []
+            for col_idx, h in enumerate(headers):
+                value = cols[col_idx].text_input(
+                    "",
+                    key=f"mat_{h}_{row_idx}",
+                    placeholder=h,
+                )
+                row_data.append(value)
+            materialen.append(dict(zip(headers, row_data)))
 
-            for i in range(st.session_state.num_material_rows):
-                cols = st.columns(7)
-                data = [cols[j].text_input("", key=f"{headers[j]}_{i}") for j in range(7)]
-                materialen.append(dict(zip(headers, data)))
+        st.button("➕ Voeg materiaal toe", on_click=add_material_row)
 
-            st.form_submit_button("➕ Voeg materiaal toe", on_click=add_row)
+    st.markdown("---")
 
-        st.markdown("---")
-        st.markdown("### ➕ Stappen toevoegen")
-        st.caption("Voeg één of meer stappen toe voor het stappenplan.")
+    # ----------------- 3. STAPPEN -----------------
+    st.markdown("### Stappen")
+    num_steps = st.number_input("Aantal stappen", min_value=1, max_value=20, value=3, step=1)
 
-        num_steps = st.number_input("Aantal stappen", min_value=1, max_value=20, value=3, step=1)
+    steps = []
+    for i in range(num_steps):
+        st.markdown(f"#### Stap {i + 1}")
+        title = st.text_input(f"Titel stap {i + 1}", key=f"title_{i}")
+        text = st.text_area(f"Tekst stap {i + 1}", key=f"text_{i}")
+        img = st.file_uploader(f"Afbeelding voor stap {i + 1} (optioneel)", type=["png", "jpg", "jpeg"], key=f"img_{i}")
 
-        steps = []
-        for i in range(num_steps):
-            st.markdown(f"#### Stap {i + 1}")
-            title = st.text_input(f"Titel stap {i + 1}", key=f"title_{i}")
-            text = st.text_area(f"Tekst stap {i + 1}", key=f"text_{i}")
-            img = st.file_uploader(f"Afbeelding voor stap {i + 1} (optioneel)", type=["png", "jpg", "jpeg"], key=f"img_{i}")
+        step_data = {"title": title, "text_blocks": [text] if text else []}
+        if img:
+            step_data["images"] = [img.read()]
+        else:
+            step_data["images"] = []
+        steps.append(step_data)
 
-            step_data = {"title": title, "text_blocks": [text] if text else []}
-            if img:
-                step_data["images"] = [img.read()]
-            else:
-                step_data["images"] = []
-            steps.append(step_data)
+    st.markdown("---")
 
-        generate_btn = st.form_submit_button("📘 Werkboekje genereren")
-
-    if generate_btn:
+    # ----------------- 4. GENEREREN -----------------
+    if st.button("📘 Werkboekje genereren"):
         meta = {
             "opdracht_titel": wb_opdracht_titel,
             "vak": wb_vak,
@@ -138,11 +151,13 @@ with tab3:
             "materialen": materialen,
         }
 
+        # logo
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 meta["logo"] = f.read()
 
+        # cover
         if wb_cover is not None:
             meta["cover_bytes"] = wb_cover.read()
 
@@ -159,4 +174,5 @@ with tab3:
                     file_name="werkboekje.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
+
 
