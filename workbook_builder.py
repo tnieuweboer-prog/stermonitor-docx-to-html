@@ -16,6 +16,15 @@ def _p(doc, text="", bold=False, size=12, align=None):
     return p
 
 
+def add_logo_to_header(section, logo_bytes: bytes):
+    """Voegt het logo rechtsboven toe in de koptekst (100x100px)."""
+    header = section.header
+    paragraph = header.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = paragraph.add_run()
+    run.add_picture(io.BytesIO(logo_bytes), width=Inches(1.0), height=Inches(1.0))
+
+
 def add_cover_page(
     doc: Document,
     *,
@@ -29,6 +38,7 @@ def add_cover_page(
 ):
     """
     Layout van de voorkant:
+    Logo in koptekst (rechts)
     Opdracht :
     <titel>
     <vak>
@@ -39,16 +49,9 @@ def add_cover_page(
     [Tabel Naam / Klas]
     """
 
-    # 1️⃣ Logo rechtsboven
+    # 1️⃣ Logo in de koptekst (alleen voor de eerste sectie)
     if logo:
-        tbl = doc.add_table(rows=1, cols=2)
-        left_cell, right_cell = tbl.rows[0].cells
-        p_right = right_cell.paragraphs[0]
-        p_right.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        r = p_right.add_run()
-        r.add_picture(io.BytesIO(logo), width=Inches(1.0), height=Inches(1.0))
-    else:
-        _p(doc, "")
+        add_logo_to_header(doc.sections[0], logo)
 
     # 2️⃣ "Opdracht :" vetgedrukt, 14 pt
     _p(doc, "Opdracht :", bold=True, size=14)
@@ -150,4 +153,5 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
     doc.save(out)
     out.seek(0)
     return out
+
 
