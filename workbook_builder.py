@@ -5,6 +5,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 
 def _p(doc, text="", bold=False, size=12, align=None):
+    """Voegt een paragraaf toe in Arial."""
     p = doc.add_paragraph()
     run = p.add_run(text)
     run.font.name = "Arial"
@@ -27,21 +28,18 @@ def add_cover_page(
     cover_bytes: bytes = None,
 ):
     """
-    Layout:
+    Layout van de voorkant:
     Opdracht :
     <titel>
-
     <vak>
-    Keuze/profieldeel:
-    Docent: ...
-    Duur van de opdracht: ...
-
-    [optionele afbeelding hier]
-
-    [tabel Naam / Klas]
+    Keuze/profieldeel (alleen als ingevuld)
+    Docent
+    Duur
+    [Afbeelding]
+    [Tabel Naam / Klas]
     """
 
-    # 1) logo rechtsboven (optioneel)
+    # 1️⃣ Logo rechtsboven
     if logo:
         tbl = doc.add_table(rows=1, cols=2)
         left_cell, right_cell = tbl.rows[0].cells
@@ -52,26 +50,32 @@ def add_cover_page(
     else:
         _p(doc, "")
 
-    # 2) Opdracht + titel
-    _p(doc, "Opdracht :", size=12)
-    _p(doc, opdracht_titel, bold=True, size=14)
+    # 2️⃣ "Opdracht :" vetgedrukt, 14 pt
+    _p(doc, "Opdracht :", bold=True, size=14)
+
+    # 3️⃣ De ingevulde titel vetgedrukt, 28 pt
+    if opdracht_titel:
+        _p(doc, opdracht_titel, bold=True, size=28)
+    else:
+        _p(doc, " ", size=28)
+
     _p(doc, "")
 
-    # 3) vak (bijv. BWI)
+    # 4️⃣ Vak (zoals BWI)
     _p(doc, vak, bold=True, size=14)
 
-    # 4) Keuze/profieldeel
-    _p(doc, "Keuze/profieldeel:", size=12)
+    # 5️⃣ Alleen weergeven als profieldeel is ingevuld
     if profieldeel:
+        _p(doc, "Keuze/profieldeel:", size=12)
         _p(doc, profieldeel, size=12)
 
-    # 5) Docent
+    # 6️⃣ Docent
     if docent:
         _p(doc, f"Docent: {docent}", size=12)
     else:
         _p(doc, "Docent:", size=12)
 
-    # 6) Duur
+    # 7️⃣ Duur
     if duur:
         _p(doc, f"Duur van de opdracht:     {duur}", size=12)
     else:
@@ -79,15 +83,15 @@ def add_cover_page(
 
     _p(doc, "")
 
-    # 7) HIER de afbeelding, maar alleen als je er één hebt geüpload
+    # 8️⃣ Afbeelding (optioneel)
     if cover_bytes:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         r = p.add_run()
         r.add_picture(io.BytesIO(cover_bytes), width=Inches(4.5))
-        _p(doc, "")  # klein beetje ruimte na de foto
+        _p(doc, "")
 
-    # 8) Tabel Naam / Klas (zoals je vroeg)
+    # 9️⃣ Tabel Naam / Klas
     table = doc.add_table(rows=2, cols=2)
     table.style = "Table Grid"
     table.rows[0].cells[0].text = "Naam:"
@@ -95,7 +99,6 @@ def add_cover_page(
     table.rows[1].cells[0].text = "Klas:"
     table.rows[1].cells[1].text = ""
 
-    # alles in Arial houden
     for row in table.rows:
         for cell in row.cells:
             for p in cell.paragraphs:
@@ -108,6 +111,7 @@ def add_cover_page(
 
 
 def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.BytesIO:
+    """Bouwt het volledige werkboekje met voorkant en stappen onder elkaar."""
     doc = Document()
 
     add_cover_page(
@@ -118,14 +122,12 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
         docent=meta.get("docent", ""),
         duur=meta.get("duur", ""),
         logo=meta.get("logo"),
-        cover_bytes=meta.get("cover_bytes"),  # ← afbeelding staat nu op voorpagina
+        cover_bytes=meta.get("cover_bytes"),
     )
 
-    # stappen op nieuwe pagina, maar daarna onder elkaar
+    # Stappen beginnen op nieuwe pagina
     if steps:
         doc.add_page_break()
-
-    from docx.shared import Inches  # just in case
 
     for i, step in enumerate(steps, start=1):
         doc.add_heading(f"Stap {i}", level=1)
@@ -148,5 +150,4 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
     doc.save(out)
     out.seek(0)
     return out
-
 
