@@ -28,6 +28,15 @@ def add_logo_to_header(section, logo_bytes: bytes):
     run.add_picture(io.BytesIO(logo_bytes), width=Inches(1.0), height=Inches(1.0))
 
 
+def _force_cell_vertical_center(cell):
+    """Zet XML vAlign=center in deze cel zodat tekst echt middenin komt."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_pr.append(parse_xml(r'<w:vAlign %s w:val="center"/>' % nsdecls('w')))
+    cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    for p in cell.paragraphs:
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+
 def add_materiaalstaat_page(doc: Document, materialen: list[dict]):
     """Voegt een nette materiaalstaatpagina toe, direct na de voorpagina."""
     doc.add_page_break()
@@ -52,33 +61,36 @@ def add_materiaalstaat_page(doc: Document, materialen: list[dict]):
     for idx, col_name in enumerate(cols):
         cell = hdr_cells[idx]
         cell.text = col_name
-        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        # uiterlijk
         for p in cell.paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             for r in p.runs:
                 r.font.bold = True
                 r.font.name = "Arial"
                 r.font.size = Pt(12)
-        # Lichtgrijze achtergrond voor header
+        # achtergrond
         cell._element.get_or_add_tcPr().append(
             parse_xml(r'<w:shd {} w:fill="D9D9D9"/>'.format(nsdecls("w")))
         )
+        # verticaal centreren
+        _force_cell_vertical_center(cell)
 
     # Data rijen
     for item in materialen:
-        row = table.add_row().cells
+        row_cells = table.add_row().cells
         for j, key in enumerate(cols):
             value = item.get(key, "")
-            cell = row[j]
+            cell = row_cells[j]
             cell.text = value
-            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            # lettertype
             for p in cell.paragraphs:
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 for r in p.runs:
                     r.font.name = "Arial"
                     r.font.size = Pt(12)
-        # Rijhoogte verdubbelen
-        tr = row[0]._tc.getparent()
+            # verticaal in het midden
+            _force_cell_vertical_center(cell)
+
+        # rijhoogte verdubbelen
+        tr = row_cells[0]._tc.getparent()
         trPr = tr.get_or_add_trPr()
         trHeight = parse_xml(r'<w:trHeight {} w:val="600"/>'.format(nsdecls("w")))
         trPr.append(trHeight)
@@ -112,19 +124,19 @@ def add_cover_page(
     _p(doc, "")
     _p(doc, vak, bold=True, size=14)
 
-    # Keuze/profieldeel op één regel
+    # Keuze/profieldeel
     if profieldeel:
         _p(doc, f"Keuze/profieldeel: {profieldeel}", size=12)
     else:
         _p(doc, "Keuze/profieldeel:", size=12)
 
-    # Docent op nieuwe regel
+    # Docent
     if docent:
         _p(doc, f"Docent: {docent}", size=12)
     else:
         _p(doc, "Docent:", size=12)
 
-    # Duur van de opdracht
+    # Duur
     if duur:
         _p(doc, f"Duur van de opdracht:     {duur}", size=12)
     else:
@@ -140,7 +152,7 @@ def add_cover_page(
         r.add_picture(io.BytesIO(cover_bytes), width=Inches(4.5))
         _p(doc, "")
 
-    # Naam en klas in tabel
+    # Naam / Klas in tabel
     table = doc.add_table(rows=2, cols=2)
     table.style = "Table Grid"
     table.rows[0].cells[0].text = "Naam:"
@@ -150,11 +162,12 @@ def add_cover_page(
 
     for row in table.rows:
         for cell in row.cells:
-            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
             for p in cell.paragraphs:
                 for r in p.runs:
                     r.font.name = "Arial"
                     r.font.size = Pt(12)
+            # hier mag ook netjes in het midden
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
 
     _p(doc, "")
     _p(doc, "")
@@ -179,11 +192,11 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
         cover_bytes=meta.get("cover_bytes"),
     )
 
-    # Materiaalstaat
+    # Materiaalstaat direct na voorblad
     if meta.get("include_materiaalstaat"):
         add_materiaalstaat_page(doc, meta.get("materialen", []))
 
-    # Stappen
+    # Daarna stappen
     if steps:
         doc.add_page_break()
 
@@ -208,5 +221,6 @@ def build_workbook_docx_front_and_steps(meta: dict, steps: list[dict]) -> io.Byt
     doc.save(out)
     out.seek(0)
     return out
+
 
 
