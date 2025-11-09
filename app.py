@@ -66,7 +66,7 @@ with tab2:
 # =========================================================
 with tab3:
     st.subheader("📘 Werkboekje-generator")
-    st.caption("Voorpagina volgens jouw layout, optioneel materiaalstaat direct na de voorkant, daarna stappen.")
+    st.caption("Voorblad → (optioneel) materiaalstaat → daarna zelf pagina’s toevoegen met vaste layouts.")
 
     # ----------------- 1. VOORPAGINA -----------------
     col1, col2 = st.columns(2)
@@ -94,7 +94,6 @@ with tab3:
     if include_materiaalstaat:
         st.markdown("#### Materiaalstaat invullen")
         st.caption("Vul de materialen in. Klik op ➕ voor een extra rij.")
-
         headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
 
         for row_idx in range(st.session_state.num_material_rows):
@@ -103,9 +102,9 @@ with tab3:
             for col_idx, h in enumerate(headers):
                 values.append(
                     cols[col_idx].text_input(
-                        label="",  # label verbergen
+                        label="",
                         key=f"mat_{h}_{row_idx}",
-                        placeholder=h,  # placeholder tonen in veld
+                        placeholder=h,
                     )
                 )
             materialen.append(dict(zip(headers, values)))
@@ -114,28 +113,85 @@ with tab3:
 
     st.markdown("---")
 
-    # ----------------- 3. STAPPEN -----------------
-    st.markdown("### Stappen")
-    num_steps = st.number_input("Aantal stappen", min_value=1, max_value=20, value=3, step=1)
+    # ----------------- 3. PAGINA'S / LAYOUTS -----------------
+    st.markdown("### Pagina's toevoegen")
 
-    steps = []
-    for i in range(num_steps):
-        st.markdown(f"#### Stap {i + 1}")
-        title = st.text_input(f"Titel stap {i + 1}", key=f"title_{i}")
-        text = st.text_area(f"Tekst stap {i + 1}", key=f"text_{i}")
-        img = st.file_uploader(f"Afbeelding voor stap {i + 1} (optioneel)", type=["png", "jpg", "jpeg"], key=f"img_{i}")
+    # lijst van pagina's in session state
+    if "wb_pages" not in st.session_state:
+        st.session_state.wb_pages = []
 
-        step_data = {"title": title, "text_blocks": [text] if text else []}
-        if img:
-            step_data["images"] = [img.read()]
-        else:
-            step_data["images"] = []
-        steps.append(step_data)
+    # knop om pagina toe te voegen
+    if st.button("➕ Nieuwe pagina"):
+        st.session_state.wb_pages.append({
+            "layout": "Werktekening (1 grote afbeelding)",
+        })
 
-    st.markdown("---")
+    layout_options = [
+        "Werktekening (1 grote afbeelding)",
+        "1 stap: korte tekst + grote afbeelding",
+        "2 stappen: tekst + afbeelding (past op 1 pagina)",
+        "3 stappen: tekst + afbeelding (past op 1 pagina)",
+    ]
+
+    # UI voor elke pagina
+    pages_data = []
+    for idx, page in enumerate(st.session_state.wb_pages):
+        st.markdown(f"#### Pagina {idx + 1}")
+        layout = st.selectbox(
+            "Kies layout",
+            layout_options,
+            index=layout_options.index(page.get("layout", layout_options[0])),
+            key=f"layout_{idx}",
+        )
+
+        page_data = {"layout": layout}
+
+        # layout 1: werktekening
+        if layout == "Werktekening (1 grote afbeelding)":
+            img = st.file_uploader(f"Afbeelding (grote werktekening) voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
+            page_data["images"] = [img.read()] if img else []
+            page_data["steps"] = []  # geen tekst
+
+        # layout 2: 1 stap + grote afbeelding
+        elif layout == "1 stap: korte tekst + grote afbeelding":
+            title = st.text_input(f"Titel stap (max 4 regels tekst) voor pagina {idx+1}", key=f"page_title_{idx}_0")
+            text = st.text_area(f"Tekst (max 4 regels)", key=f"page_text_{idx}_0", height=80)
+            img = st.file_uploader(f"Afbeelding groot voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
+            page_data["steps"] = [{"title": title, "text": text}]
+            page_data["images"] = [img.read()] if img else []
+
+        # layout 3: 2 stappen
+        elif layout == "2 stappen: tekst + afbeelding (past op 1 pagina)":
+            steps_list = []
+            images_list = []
+            for s in range(2):
+                title = st.text_input(f"Titel stap {s+1} (max 4 regels) voor pagina {idx+1}", key=f"page_title_{idx}_{s}")
+                text = st.text_area(f"Tekst stap {s+1}", key=f"page_text_{idx}_{s}", height=80)
+                img = st.file_uploader(f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}")
+                steps_list.append({"title": title, "text": text})
+                images_list.append(img.read() if img else None)
+            page_data["steps"] = steps_list
+            page_data["images"] = images_list
+
+        # layout 4: 3 stappen
+        elif layout == "3 stappen: tekst + afbeelding (past op 1 pagina)":
+            steps_list = []
+            images_list = []
+            for s in range(3):
+                title = st.text_input(f"Titel stap {s+1} voor pagina {idx+1}", key=f"page_title_{idx}_{s}")
+                text = st.text_area(f"Tekst stap {s+1}", key=f"page_text_{idx}_{s}", height=80)
+                img = st.file_uploader(f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}")
+                steps_list.append({"title": title, "text": text})
+                images_list.append(img.read() if img else None)
+            page_data["steps"] = steps_list
+            page_data["images"] = images_list
+
+        pages_data.append(page_data)
+        st.markdown("---")
 
     # ----------------- 4. GENEREREN -----------------
     if st.button("📘 Werkboekje genereren"):
+        # meta voor voorblad + materiaalstaat
         meta = {
             "opdracht_titel": wb_opdracht_titel,
             "vak": wb_vak,
@@ -146,15 +202,55 @@ with tab3:
             "materialen": materialen,
         }
 
-        # logo automatisch laden
+        # logo automatisch uit assets
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 meta["logo"] = f.read()
 
-        # cover afbeelding (voorblad)
         if wb_cover is not None:
             meta["cover_bytes"] = wb_cover.read()
+
+        # vertaal pages_data naar steps voor builder
+        steps = []
+        for page in pages_data:
+            layout = page["layout"]
+
+            if layout == "Werktekening (1 grote afbeelding)":
+                # één stap zonder tekst, met afbeelding
+                img_bytes = page["images"][0] if page["images"] else None
+                steps.append({
+                    "title": "Werktekening",
+                    "text_blocks": [],
+                    "images": [img_bytes] if img_bytes else [],
+                })
+
+            elif layout == "1 stap: korte tekst + grote afbeelding":
+                stp = page["steps"][0] if page["steps"] else {"title": "", "text": ""}
+                img_bytes = page["images"][0] if page["images"] else None
+                steps.append({
+                    "title": stp.get("title", ""),
+                    "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
+                    "images": [img_bytes] if img_bytes else [],
+                })
+
+            elif layout == "2 stappen: tekst + afbeelding (past op 1 pagina)":
+                for idx_s, stp in enumerate(page["steps"]):
+                    img_bytes = page["images"][idx_s] if idx_s < len(page["images"]) else None
+                    steps.append({
+                        "title": stp.get("title", ""),
+                        "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
+                        "images": [img_bytes] if img_bytes else [],
+                    })
+
+            elif layout == "3 stappen: tekst + afbeelding (past op 1 pagina)":
+                for idx_s, stp in enumerate(page["steps"]):
+                    img_bytes = page["images"][idx_s] if idx_s < len(page["images"]) else None
+                    steps.append({
+                        "title": stp.get("title", ""),
+                        "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
+                        "images": [img_bytes] if img_bytes else [],
+                    })
 
         with st.spinner("Werkboekje wordt gemaakt..."):
             try:
@@ -169,4 +265,5 @@ with tab3:
                     file_name="werkboekje.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
+
 
