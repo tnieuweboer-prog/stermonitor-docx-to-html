@@ -61,7 +61,7 @@ with tab3:
     st.subheader("📘 Werkboekjes-generator")
     st.caption("Voorblad → (optioneel) materiaalstaat → daarna pagina’s die je zelf kiest.")
 
-    # 1. voorblad
+    # 1. Voorblad
     col1, col2 = st.columns(2)
     with col1:
         wb_opdracht_titel = st.text_input("Opdracht titel")
@@ -74,7 +74,7 @@ with tab3:
 
     st.markdown("---")
 
-    # 2. materiaalstaat
+    # 2. Materiaalstaat
     if "num_material_rows" not in st.session_state:
         st.session_state.num_material_rows = 1
 
@@ -87,9 +87,8 @@ with tab3:
     if include_materiaalstaat:
         st.markdown("#### Materiaalstaat invullen")
         st.caption("Vul hieronder de materialen in.")
-
         headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
-        # toon kolomnamen duidelijk
+
         header_cols = st.columns([1, 1, 2, 1, 1, 1, 1])
         for i, h in enumerate(headers):
             header_cols[i].markdown(f"**{h}**")
@@ -100,7 +99,9 @@ with tab3:
             for col_idx, h in enumerate(headers):
                 values.append(
                     cols[col_idx].text_input(
-                        label="", key=f"mat_{h}_{row_idx}", placeholder=h
+                        label="",
+                        key=f"mat_{h}_{row_idx}",
+                        placeholder=h,
                     )
                 )
             materialen.append(dict(zip(headers, values)))
@@ -109,16 +110,11 @@ with tab3:
 
     st.markdown("---")
 
-    # 3. pagina's
-    st.markdown("### Pagina's toevoegen")
+    # 3. Pagina's
+    st.markdown("### Pagina's")
 
     if "wb_pages" not in st.session_state:
         st.session_state.wb_pages = []
-
-    if st.button("➕ Nieuwe pagina"):
-        st.session_state.wb_pages.append({
-            "layout": "Werktekening (1 grote afbeelding)",
-        })
 
     layout_options = [
         "Werktekening (1 grote afbeelding)",
@@ -136,9 +132,9 @@ with tab3:
             index=layout_options.index(page.get("layout", layout_options[0])),
             key=f"layout_{idx}",
         )
-
         page_data = {"layout": layout}
 
+        # layout invulling
         if layout == "Werktekening (1 grote afbeelding)":
             img = st.file_uploader(f"Afbeelding voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
             page_data["images"] = [img.read()] if img else []
@@ -176,7 +172,15 @@ with tab3:
         pages_data.append(page_data)
         st.markdown("---")
 
-    # 4. genereren
+    # 3b. ➕ knop ONDERAAN (altijd hier)
+    if st.button("➕ Nieuwe pagina"):
+        st.session_state.wb_pages.append({
+            "layout": "Werktekening (1 grote afbeelding)",
+        })
+
+    st.markdown("---")
+
+    # 4. Genereren
     if st.button("📘 Werkboekje genereren"):
         meta = {
             "opdracht_titel": wb_opdracht_titel,
@@ -196,7 +200,7 @@ with tab3:
         if wb_cover is not None:
             meta["cover_bytes"] = wb_cover.read()
 
-        # omzetting van pages → steps
+        # pages → steps
         steps = []
         for page in pages_data:
             layout = page["layout"]
