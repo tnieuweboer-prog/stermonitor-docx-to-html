@@ -13,13 +13,10 @@ tab1, tab2, tab3 = st.tabs([
     "📘 Werkboekjes-generator"
 ])
 
-# =========================================================
-# TAB 1
-# =========================================================
+# ============== TAB 1 ==============
 with tab1:
     st.subheader("DOCX → HTML Converter")
     uploaded_html = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="html_upload")
-
     if uploaded_html:
         with st.spinner("Word-bestand wordt omgezet..."):
             html_out = docx_to_html(uploaded_html)
@@ -35,11 +32,9 @@ with tab1:
         st.info("Upload een .docx-bestand om te converteren naar HTML.")
 
 
-# =========================================================
-# TAB 2
-# =========================================================
+# ============== TAB 2 ==============
 with tab2:
-    st.subheader("DOCX → PowerPoint (AI-Hybride)")
+    st.subheader("DOCX → PowerPoint (AI-hybride)")
     uploaded_ai = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="hybrid_upload")
 
     if uploaded_ai:
@@ -61,14 +56,12 @@ with tab2:
         st.info("Upload een .docx-bestand om een AI-dia te genereren.")
 
 
-# =========================================================
-# TAB 3
-# =========================================================
+# ============== TAB 3 ==============
 with tab3:
-    st.subheader("📘 Werkboekje-generator")
-    st.caption("Voorblad → (optioneel) materiaalstaat → daarna zelf pagina’s toevoegen met vaste layouts.")
+    st.subheader("📘 Werkboekjes-generator")
+    st.caption("Voorblad → (optioneel) materiaalstaat → daarna pagina’s die je zelf kiest.")
 
-    # ----------------- 1. VOORPAGINA -----------------
+    # 1. voorblad
     col1, col2 = st.columns(2)
     with col1:
         wb_opdracht_titel = st.text_input("Opdracht titel")
@@ -81,7 +74,7 @@ with tab3:
 
     st.markdown("---")
 
-    # ----------------- 2. MATERIAALSTAAT -----------------
+    # 2. materiaalstaat
     if "num_material_rows" not in st.session_state:
         st.session_state.num_material_rows = 1
 
@@ -93,8 +86,13 @@ with tab3:
     materialen = []
     if include_materiaalstaat:
         st.markdown("#### Materiaalstaat invullen")
-        st.caption("Vul de materialen in. Klik op ➕ voor een extra rij.")
+        st.caption("Vul hieronder de materialen in.")
+
         headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
+        # toon kolomnamen duidelijk
+        header_cols = st.columns([1, 1, 2, 1, 1, 1, 1])
+        for i, h in enumerate(headers):
+            header_cols[i].markdown(f"**{h}**")
 
         for row_idx in range(st.session_state.num_material_rows):
             cols = st.columns([1, 1, 2, 1, 1, 1, 1])
@@ -102,9 +100,7 @@ with tab3:
             for col_idx, h in enumerate(headers):
                 values.append(
                     cols[col_idx].text_input(
-                        label="",
-                        key=f"mat_{h}_{row_idx}",
-                        placeholder=h,
+                        label="", key=f"mat_{h}_{row_idx}", placeholder=h
                     )
                 )
             materialen.append(dict(zip(headers, values)))
@@ -113,14 +109,12 @@ with tab3:
 
     st.markdown("---")
 
-    # ----------------- 3. PAGINA'S / LAYOUTS -----------------
+    # 3. pagina's
     st.markdown("### Pagina's toevoegen")
 
-    # lijst van pagina's in session state
     if "wb_pages" not in st.session_state:
         st.session_state.wb_pages = []
 
-    # knop om pagina toe te voegen
     if st.button("➕ Nieuwe pagina"):
         st.session_state.wb_pages.append({
             "layout": "Werktekening (1 grote afbeelding)",
@@ -133,7 +127,6 @@ with tab3:
         "3 stappen: tekst + afbeelding (past op 1 pagina)",
     ]
 
-    # UI voor elke pagina
     pages_data = []
     for idx, page in enumerate(st.session_state.wb_pages):
         st.markdown(f"#### Pagina {idx + 1}")
@@ -146,26 +139,22 @@ with tab3:
 
         page_data = {"layout": layout}
 
-        # layout 1: werktekening
         if layout == "Werktekening (1 grote afbeelding)":
-            img = st.file_uploader(f"Afbeelding (grote werktekening) voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
+            img = st.file_uploader(f"Afbeelding voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
             page_data["images"] = [img.read()] if img else []
-            page_data["steps"] = []  # geen tekst
+            page_data["steps"] = []
 
-        # layout 2: 1 stap + grote afbeelding
         elif layout == "1 stap: korte tekst + grote afbeelding":
-            title = st.text_input(f"Titel stap (max 4 regels tekst) voor pagina {idx+1}", key=f"page_title_{idx}_0")
+            title = st.text_input(f"Titel voor pagina {idx+1}", key=f"page_title_{idx}_0")
             text = st.text_area(f"Tekst (max 4 regels)", key=f"page_text_{idx}_0", height=80)
-            img = st.file_uploader(f"Afbeelding groot voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
+            img = st.file_uploader(f"Afbeelding voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
             page_data["steps"] = [{"title": title, "text": text}]
             page_data["images"] = [img.read()] if img else []
 
-        # layout 3: 2 stappen
         elif layout == "2 stappen: tekst + afbeelding (past op 1 pagina)":
-            steps_list = []
-            images_list = []
+            steps_list, images_list = [], []
             for s in range(2):
-                title = st.text_input(f"Titel stap {s+1} (max 4 regels) voor pagina {idx+1}", key=f"page_title_{idx}_{s}")
+                title = st.text_input(f"Titel stap {s+1} (pagina {idx+1})", key=f"page_title_{idx}_{s}")
                 text = st.text_area(f"Tekst stap {s+1}", key=f"page_text_{idx}_{s}", height=80)
                 img = st.file_uploader(f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}")
                 steps_list.append({"title": title, "text": text})
@@ -173,12 +162,10 @@ with tab3:
             page_data["steps"] = steps_list
             page_data["images"] = images_list
 
-        # layout 4: 3 stappen
         elif layout == "3 stappen: tekst + afbeelding (past op 1 pagina)":
-            steps_list = []
-            images_list = []
+            steps_list, images_list = [], []
             for s in range(3):
-                title = st.text_input(f"Titel stap {s+1} voor pagina {idx+1}", key=f"page_title_{idx}_{s}")
+                title = st.text_input(f"Titel stap {s+1} (pagina {idx+1})", key=f"page_title_{idx}_{s}")
                 text = st.text_area(f"Tekst stap {s+1}", key=f"page_text_{idx}_{s}", height=80)
                 img = st.file_uploader(f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}")
                 steps_list.append({"title": title, "text": text})
@@ -189,9 +176,8 @@ with tab3:
         pages_data.append(page_data)
         st.markdown("---")
 
-    # ----------------- 4. GENEREREN -----------------
+    # 4. genereren
     if st.button("📘 Werkboekje genereren"):
-        # meta voor voorblad + materiaalstaat
         meta = {
             "opdracht_titel": wb_opdracht_titel,
             "vak": wb_vak,
@@ -202,7 +188,6 @@ with tab3:
             "materialen": materialen,
         }
 
-        # logo automatisch uit assets
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
@@ -211,13 +196,12 @@ with tab3:
         if wb_cover is not None:
             meta["cover_bytes"] = wb_cover.read()
 
-        # vertaal pages_data naar steps voor builder
+        # omzetting van pages → steps
         steps = []
         for page in pages_data:
             layout = page["layout"]
 
             if layout == "Werktekening (1 grote afbeelding)":
-                # één stap zonder tekst, met afbeelding
                 img_bytes = page["images"][0] if page["images"] else None
                 steps.append({
                     "title": "Werktekening",
