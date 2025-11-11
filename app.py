@@ -5,18 +5,180 @@ from pptx_converter_hybrid import docx_to_pptx_hybrid
 from workbook_builder import build_workbook_docx_front_and_steps
 
 st.set_page_config(page_title="Triade DOCX Tools", page_icon="📘", layout="wide")
-st.title("📘 Triade DOCX Tools")
 
-tab1, tab2, tab3 = st.tabs([
-    "💚 HTML (Stermonitor / LessonUp)",
-    "🤖 PowerPoint (AI-hybride)",
-    "📘 Werkboekjes-generator"
-])
+# ---------- CUSTOM CSS ----------
+st.markdown(
+    """
+    <style>
+    /* hele pagina achtergrond zacht groen */
+    .stApp {
+        background: #e5f7e5;
+    }
 
-# ============== TAB 1 ==============
+    /* topbar */
+    .triade-topbar {
+        width: 100%;
+        background: #b5e3b5;
+        border-bottom: 1px solid #9dd59d;
+        padding: 0.5rem 1.5rem 0.4rem 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+    }
+    .triade-logo {
+        height: 48px;
+        object-fit: contain;
+    }
+    .triade-search {
+        flex: 1;
+    }
+    .triade-search input {
+        width: 100%;
+        padding: 0.5rem 1rem;
+        border-radius: 9999px;
+        border: 1px solid #cfeacb;
+        outline: none;
+        background: white;
+    }
+    .triade-btn {
+        background: #0fa14b;
+        color: white;
+        padding: 0.5rem 1.1rem;
+        border-radius: 0.5rem 0.5rem 0 0;
+        font-weight: 600;
+        border: none;
+    }
+    .triade-nav {
+        display: flex;
+        gap: 1rem;
+        font-weight: 600;
+        color: #0b4c2c;
+    }
+    .triade-hero {
+        background: linear-gradient(180deg, #e5f7e5 0%, #ffffff 55%);
+        padding: 1.5rem 1.5rem 0.5rem 1.5rem;
+    }
+    .triade-hero-inner {
+        background: white;
+        border-radius: 1.5rem 1.5rem 0 0;
+        min-height: 220px;
+        display: flex;
+        gap: 1.5rem;
+        padding: 1.5rem;
+    }
+    .triade-hero-left {
+        flex: 0 0 280px;
+        background: #0fa14b;
+        border-radius: 1.2rem 1.2rem 1.2rem 0;
+        color: white;
+        padding: 1.2rem 1.1rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .triade-hero-left h2 {
+        margin: 0;
+        font-size: 1.4rem;
+        line-height: 1.2;
+    }
+    .triade-hero-right {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    .triade-hero-textline {
+        font-weight: 600;
+        color: #0b4c2c;
+    }
+    /* tabs dichter tegen hero */
+    .block-container {
+        padding-top: 0rem;
+    }
+    @media (max-width: 900px) {
+        .triade-topbar {
+            flex-wrap: wrap;
+        }
+        .triade-hero-inner {
+            flex-direction: column;
+        }
+        .triade-hero-left {
+            width: 100%;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------- TOPBAR ----------
+logo_path = os.path.join("assets", "logo-triade-460px.png")
+if os.path.exists(logo_path):
+    logo_html = f'<img src="data:image/png;base64,{st.image(logo_path).image_data}" />'
+# we kunnen niet makkelijk base64 hier; gewoon st.image in kolommen
+topcol1, topcol2, topcol3, topcol4 = st.columns([1.3, 3, 2.5, 2])
+with topcol1:
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=130)
+    else:
+        st.markdown("### De Triade")
+with topcol2:
+    st.text_input("Zoeken", placeholder="Zoeken")
+with topcol3:
+    st.markdown(
+        '<div style="display:flex;gap:0.5rem;justify-content:flex-end;">'
+        '<button class="triade-btn">Triade dagen</button>'
+        '<button class="triade-btn" style="border-radius:0.5rem;">Schoolfoto\'s</button>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+with topcol4:
+    st.markdown(
+        '<div style="display:flex;gap:1rem;justify-content:flex-end;margin-top:0.4rem;color:#0b4c2c;font-weight:600;">'
+        '<span>Over De Triade</span>'
+        '<span>Onderwijs</span>'
+        '<span>Praktisch</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+# ---------- HERO ----------
+st.markdown(
+    """
+    <div class="triade-hero">
+        <div class="triade-hero-inner">
+            <div class="triade-hero-left">
+                <h2>Dé technische opleider<br/>van de regio</h2>
+                <p style="margin-top:0.6rem;font-size:0.85rem;">vmbo • technische mavo • technische havo</p>
+            </div>
+            <div class="triade-hero-right">
+                <div class="triade-hero-textline">
+                    SG De Triade | vmbo, technische mavo en technische havo
+                </div>
+                <div class="triade-hero-textline" style="font-weight:400;">
+                    Nijverheidstraat 2, 1135 GE Edam · (0299) 48 00 90
+                </div>
+                <div style="background:#f2faf2;border:1px solid #d5ecd5;padding:0.6rem 0.9rem;border-radius:0.6rem;">
+                    Gebruik hieronder de tools om lesmateriaal om te zetten voor Stermonitor, PowerPoint of werkboekjes.
+                </div>
+            </div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------- TABS ----------
+tab1, tab2, tab3 = st.tabs(
+    ["💚 HTML (Stermonitor / LessonUp)", "🤖 PowerPoint (AI-hybride)", "📘 Werkboekjes-generator"]
+)
+
+# ---------------- TAB 1 ----------------
 with tab1:
     st.subheader("DOCX → HTML Converter")
     uploaded_html = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="html_upload")
+
     if uploaded_html:
         with st.spinner("Word-bestand wordt omgezet..."):
             html_out = docx_to_html(uploaded_html)
@@ -31,10 +193,9 @@ with tab1:
     else:
         st.info("Upload een .docx-bestand om te converteren naar HTML.")
 
-
-# ============== TAB 2 ==============
+# ---------------- TAB 2 ----------------
 with tab2:
-    st.subheader("DOCX → PowerPoint (AI-hybride)")
+    st.subheader("DOCX → PowerPoint (AI-Hybride)")
     uploaded_ai = st.file_uploader("Upload Word-bestand (.docx)", type=["docx"], key="hybrid_upload")
 
     if uploaded_ai:
@@ -55,13 +216,12 @@ with tab2:
     else:
         st.info("Upload een .docx-bestand om een AI-dia te genereren.")
 
-
-# ============== TAB 3 ==============
+# ---------------- TAB 3 ----------------
 with tab3:
     st.subheader("📘 Werkboekjes-generator")
     st.caption("Voorblad → (optioneel) materiaalstaat → daarna pagina’s die je zelf kiest.")
 
-    # 1. Voorblad
+    # ---- voorblad ----
     col1, col2 = st.columns(2)
     with col1:
         wb_opdracht_titel = st.text_input("Opdracht titel")
@@ -74,7 +234,7 @@ with tab3:
 
     st.markdown("---")
 
-    # 2. Materiaalstaat
+    # ---- materiaalstaat ----
     if "num_material_rows" not in st.session_state:
         st.session_state.num_material_rows = 1
 
@@ -82,13 +242,11 @@ with tab3:
         st.session_state.num_material_rows += 1
 
     include_materiaalstaat = st.checkbox("Materiaalstaat toevoegen aan werkboekje")
-
     materialen = []
     if include_materiaalstaat:
         st.markdown("#### Materiaalstaat invullen")
         st.caption("Vul hieronder de materialen in.")
         headers = ["Nummer", "Aantal", "Benaming", "Lengte", "Breedte", "Dikte", "Materiaal"]
-
         header_cols = st.columns([1, 1, 2, 1, 1, 1, 1])
         for i, h in enumerate(headers):
             header_cols[i].markdown(f"**{h}**")
@@ -99,18 +257,15 @@ with tab3:
             for col_idx, h in enumerate(headers):
                 values.append(
                     cols[col_idx].text_input(
-                        label="",
-                        key=f"mat_{h}_{row_idx}",
-                        placeholder=h,
+                        label="", key=f"mat_{h}_{row_idx}", placeholder=h
                     )
                 )
             materialen.append(dict(zip(headers, values)))
-
         st.button("➕ Voeg materiaal toe", on_click=add_material_row)
 
     st.markdown("---")
 
-    # 3. Pagina's
+    # ---- pagina's ----
     st.markdown("### Pagina's")
 
     if "wb_pages" not in st.session_state:
@@ -134,16 +289,19 @@ with tab3:
         )
         page_data = {"layout": layout}
 
-        # layout invulling
         if layout == "Werktekening (1 grote afbeelding)":
-            img = st.file_uploader(f"Afbeelding voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
+            img = st.file_uploader(
+                f"Afbeelding voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0"
+            )
             page_data["images"] = [img.read()] if img else []
             page_data["steps"] = []
 
         elif layout == "1 stap: korte tekst + grote afbeelding":
             title = st.text_input(f"Titel voor pagina {idx+1}", key=f"page_title_{idx}_0")
             text = st.text_area(f"Tekst (max 4 regels)", key=f"page_text_{idx}_0", height=80)
-            img = st.file_uploader(f"Afbeelding voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0")
+            img = st.file_uploader(
+                f"Afbeelding voor pagina {idx+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_0"
+            )
             page_data["steps"] = [{"title": title, "text": text}]
             page_data["images"] = [img.read()] if img else []
 
@@ -152,7 +310,9 @@ with tab3:
             for s in range(2):
                 title = st.text_input(f"Titel stap {s+1} (pagina {idx+1})", key=f"page_title_{idx}_{s}")
                 text = st.text_area(f"Tekst stap {s+1}", key=f"page_text_{idx}_{s}", height=80)
-                img = st.file_uploader(f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}")
+                img = st.file_uploader(
+                    f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}"
+                )
                 steps_list.append({"title": title, "text": text})
                 images_list.append(img.read() if img else None)
             page_data["steps"] = steps_list
@@ -163,7 +323,9 @@ with tab3:
             for s in range(3):
                 title = st.text_input(f"Titel stap {s+1} (pagina {idx+1})", key=f"page_title_{idx}_{s}")
                 text = st.text_area(f"Tekst stap {s+1}", key=f"page_text_{idx}_{s}", height=80)
-                img = st.file_uploader(f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}")
+                img = st.file_uploader(
+                    f"Afbeelding stap {s+1}", type=["png", "jpg", "jpeg"], key=f"page_img_{idx}_{s}"
+                )
                 steps_list.append({"title": title, "text": text})
                 images_list.append(img.read() if img else None)
             page_data["steps"] = steps_list
@@ -172,15 +334,12 @@ with tab3:
         pages_data.append(page_data)
         st.markdown("---")
 
-    # 3b. ➕ knop ONDERAAN (altijd hier)
+    # knop helemaal onder
     if st.button("➕ Nieuwe pagina"):
-        st.session_state.wb_pages.append({
-            "layout": "Werktekening (1 grote afbeelding)",
-        })
+        st.session_state.wb_pages.append({"layout": "Werktekening (1 grote afbeelding)"})
 
     st.markdown("---")
 
-    # 4. Genereren
     if st.button("📘 Werkboekje genereren"):
         meta = {
             "opdracht_titel": wb_opdracht_titel,
@@ -191,54 +350,52 @@ with tab3:
             "include_materiaalstaat": include_materiaalstaat,
             "materialen": materialen,
         }
-
         logo_path = os.path.join("assets", "logo-triade-460px.png")
         if os.path.exists(logo_path):
             with open(logo_path, "rb") as f:
                 meta["logo"] = f.read()
-
         if wb_cover is not None:
             meta["cover_bytes"] = wb_cover.read()
 
-        # pages → steps
+        # build steps from pages
         steps = []
         for page in pages_data:
             layout = page["layout"]
-
             if layout == "Werktekening (1 grote afbeelding)":
                 img_bytes = page["images"][0] if page["images"] else None
-                steps.append({
-                    "title": "Werktekening",
-                    "text_blocks": [],
-                    "images": [img_bytes] if img_bytes else [],
-                })
-
+                steps.append(
+                    {"title": "Werktekening", "text_blocks": [], "images": [img_bytes] if img_bytes else []}
+                )
             elif layout == "1 stap: korte tekst + grote afbeelding":
                 stp = page["steps"][0] if page["steps"] else {"title": "", "text": ""}
                 img_bytes = page["images"][0] if page["images"] else None
-                steps.append({
-                    "title": stp.get("title", ""),
-                    "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
-                    "images": [img_bytes] if img_bytes else [],
-                })
-
+                steps.append(
+                    {
+                        "title": stp.get("title", ""),
+                        "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
+                        "images": [img_bytes] if img_bytes else [],
+                    }
+                )
             elif layout == "2 stappen: tekst + afbeelding (past op 1 pagina)":
-                for idx_s, stp in enumerate(page["steps"]):
-                    img_bytes = page["images"][idx_s] if idx_s < len(page["images"]) else None
-                    steps.append({
-                        "title": stp.get("title", ""),
-                        "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
-                        "images": [img_bytes] if img_bytes else [],
-                    })
-
+                for i, stp in enumerate(page["steps"]):
+                    img_bytes = page["images"][i] if i < len(page["images"]) else None
+                    steps.append(
+                        {
+                            "title": stp.get("title", ""),
+                            "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
+                            "images": [img_bytes] if img_bytes else [],
+                        }
+                    )
             elif layout == "3 stappen: tekst + afbeelding (past op 1 pagina)":
-                for idx_s, stp in enumerate(page["steps"]):
-                    img_bytes = page["images"][idx_s] if idx_s < len(page["images"]) else None
-                    steps.append({
-                        "title": stp.get("title", ""),
-                        "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
-                        "images": [img_bytes] if img_bytes else [],
-                    })
+                for i, stp in enumerate(page["steps"]):
+                    img_bytes = page["images"][i] if i < len(page["images"]) else None
+                    steps.append(
+                        {
+                            "title": stp.get("title", ""),
+                            "text_blocks": [stp.get("text", "")] if stp.get("text") else [],
+                            "images": [img_bytes] if img_bytes else [],
+                        }
+                    )
 
         with st.spinner("Werkboekje wordt gemaakt..."):
             try:
@@ -253,5 +410,6 @@ with tab3:
                     file_name="werkboekje.docx",
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 )
+
 
 
