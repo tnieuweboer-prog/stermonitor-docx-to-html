@@ -2,10 +2,9 @@ import os
 import base64
 from html import escape
 from typing import Optional, List, Dict
-
 from docx import Document
 
-# Pillow voor beeldmaten (optioneel, met fallback)
+# Pillow voor beeldmaten
 try:
     from PIL import Image
     PIL_OK = True
@@ -20,7 +19,9 @@ except Exception:
     cloudinary = None
 
 
+# ---------- Cloudinary Config ----------
 def _cloudinary_ready() -> bool:
+    """Check of Cloudinary correct is geconfigureerd via env of URL."""
     if cloudinary is None:
         return False
     url = os.getenv("CLOUDINARY_URL")
@@ -43,7 +44,7 @@ def _cloudinary_ready() -> bool:
 
 
 def _upload_bytes(img_bytes: bytes, folder="triade-html") -> Optional[str]:
-    """Upload naar Cloudinary, retourneer secure_url; None bij geen config/fout."""
+    """Upload naar Cloudinary, retourneer secure_url of None bij fout."""
     if not _cloudinary_ready():
         return None
     try:
@@ -60,8 +61,9 @@ def _upload_bytes(img_bytes: bytes, folder="triade-html") -> Optional[str]:
         return None
 
 
+# ---------- Hulpfuncties ----------
 def _image_size(img_bytes: bytes) -> Optional[tuple]:
-    """Geef (w,h) in pixels terug, of None als Pillow niet beschikbaar/faalt."""
+    """Bepaal (breedte, hoogte) van afbeelding met Pillow."""
     if not PIL_OK:
         return None
     try:
@@ -73,10 +75,7 @@ def _image_size(img_bytes: bytes) -> Optional[tuple]:
 
 
 def _img_infos_for_paragraph(para, doc: Document) -> List[Dict]:
-    """
-    Vind ALLE afbeeldingen in deze paragraaf door runs te scannen op a:blip/@r:embed.
-    Retourneert lijst met dicts: {"url": str, "w": int|None, "h": int|None, "small": bool}
-    """
+    """Zoek alle afbeeldingen in paragraaf en retourneer info."""
     infos: List[Dict] = []
     for run in para.runs:
         blips = run._r.xpath(".//a:blip")
@@ -92,13 +91,11 @@ def _img_infos_for_paragraph(para, doc: Document) -> List[Dict]:
             except Exception:
                 continue
 
-            # bepaal grootte
             size = _image_size(blob)
             w = size[0] if size else None
             h = size[1] if size else None
             small = (w is not None and h is not None and w < 100 and h < 100)
 
-            # upload naar Cloudinary of data-uri
             url = _upload_bytes(blob)
             if not url:
                 b64 = base64.b64encode(blob).decode("ascii")
@@ -118,14 +115,15 @@ def _is_heading(para) -> int:
     return 0
 
 
+# ---------- Hoofdconverter ----------
 def docx_to_html(file_like) -> str:
     """
-    DOCX → HTML:
-      - <h1..h3> voor koppen
-      - <p> voor alinea's
-      - Afbeeldingen:
-          * standaard max 300×300 (via CSS inline style)
-          * als >=2 kleine (<100×100) in dezelfde paragraaf, dan naast elkaar in een flex-rij
+    DOCX → HTML met:
+      • Koppen als <h1..h3>
+      • Paragrafen als <p>
+      • Afbeeldingen:
+          - Kleine (<100×100) → naast elkaar, formaat behouden
+          - Grotere (≥100×100) → vergroot tot max 300×300, onder elkaar
     """
     doc = Document(file_like)
     out = ['<div class="lesson">']
@@ -134,36 +132,36 @@ def docx_to_html(file_like) -> str:
         text = (para.text or "").strip()
         level = _is_heading(para)
 
+        # Tekst (kop of paragraaf)
         if level and text:
-            level = min(3, max(1, level))
-            out.append(f"<h{level}>{escape(text)}</h{level}>")
+            out.append(f"<h{min(level,3)}>{escape(text)}</h{min(level,3)}>")
         elif text:
             out.append(f"<p>{escape(text)}</p>")
 
-        # afbeeldingen in deze paragraaf
+        # Afbeeldingen
         imgs = _img_infos_for_paragraph(para, doc)
         if not imgs:
             continue
 
-        small_count = sum(1 for i in imgs if i["small"])
-        # CASE A: meerdere kleine → flex-rij
-        if small_count >= 2 and small_count == len(imgs):
-            out.append(
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin:4px 0;">'
-                + "".join(
-                    f'<img src="{i["url"]}" alt="" loading="lazy" '
-                    f'style="height:100px;max-width:300px;max-height:300px;object-fit:contain;" />'
-                    for i in imgs
-                )
-                + "</div>"
-            )
-        else:
-            # CASE B: normaal per stuk (max 300×300)
-            for i in imgs:
+        small_imgs = [i for i in imgs if i["small"]]
+        big_imgs = [i for i in imgs if not i["small"]]
+
+        # Kleine naast elkaar
+        if small_imgs:
+            out.append('<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin:4px 0;">')
+            for i in small_imgs:
                 out.append(
-                    f'<p><img src="{i["url"]}" alt="" loading="lazy" '
-                    f'style="max-width:300px;max-height:300px;object-fit:contain;" /></p>'
+                    f'<img src="{i["url"]}" alt="" loading="lazy" '
+                    f'style="max-width:{i["w"] or 100}px;max-height:{i["h"] or 100}px;object-fit:contain;" />'
                 )
+            out.append("</div>")
+
+        # Grote onder elkaar, max 300×300
+        for i in big_imgs:
+            out.append(
+                f'<p><img src="{i["url"]}" alt="" loading="lazy" '
+                f'style="max-width:300px;max-height:300px;object-fit:contain;" /></p>'
+            )
 
     out.append("</div>")
     return "\n".join(out)
