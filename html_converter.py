@@ -1,5 +1,4 @@
 import os
-import io
 import base64
 from html import escape
 from typing import Optional, List
@@ -7,16 +6,15 @@ from typing import Optional, List
 from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
-# --- Cloudinary (optioneel, auto als env aanwezig) ---
+# --- Cloudinary (optioneel) ---
 try:
     import cloudinary
     import cloudinary.uploader
 except Exception:
-    cloudinary = None  # module niet geïnstalleerd of omgeving zonder internet
+    cloudinary = None
 
 
-def _cloudinary_configured() -> bool:
-    """Check of Cloudinary credenties aanwezig zijn en configureer."""
+def _cloudinary_ready() -> bool:
     if cloudinary is None:
         return False
     url = os.getenv("CLOUDINARY_URL")
@@ -31,120 +29,100 @@ def _cloudinary_configured() -> bool:
     secret = os.getenv("CLOUDINARY_API_SECRET")
     if name and key and secret:
         try:
-            cloudinary.config(
-                cloud_name=name, api_key=key, api_secret=secret, secure=True
-            )
+            cloudinary.config(cloud_name=name, api_key=key, api_secret=secret, secure=True)
             return True
         except Exception:
             return False
     return False
 
 
-def upload_image_bytes_to_cloudinary(
-    img_bytes: bytes,
-    public_id: Optional[str] = None,
-    folder: str = "triade-html",
-) -> Optional[str]:
-    """Upload bytes → Cloudinary en retourneer secure_url. None bij fout of geen config."""
-    if not _cloudinary_configured():
+def _upload_bytes(img_bytes: bytes, folder="triade-html") -> Optional[str]:
+    """Upload naar Cloudinary, retourneer secure_url; None bij geen config/fout."""
+    if not _cloudinary_ready():
         return None
     try:
         res = cloudinary.uploader.upload(
             img_bytes,
             folder=folder,
-            public_id=public_id,
             overwrite=True,
-            resource_type="image",
             use_filename=True,
             unique_filename=True,
+            resource_type="image",
         )
         return res.get("secure_url") or res.get("url")
     except Exception:
         return None
 
 
-# --- Extract helpers ---
-def _extract_all_image_blobs(doc: Document) -> List[bytes]:
-    """Pak alle image blobs uit het document in documentvolgorde van rels."""
-    blobs = []
-    for rel in doc.part.rels.values():
-        if rel.reltype == RT.IMAGE:
-            blobs.append(rel.target_part.blob)
-    return blobs
+def _img_urls_for_paragraph(para, doc: Document) -> List[str]:
+    """
+    Vind ALLE afbeeldingen in deze paragraaf door runs te scannen op a:blip/@r:embed.
+    """
+    urls: List[str] = []
+    for run in para.runs:
+        # zoek a:blip nodes
+        blips = run._r.xpath(".//a:blip")
+        if not blips:
+            continue
+        for blip in blips:
+            rId = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+            if not rId:
+                continue
+            try:
+                part = doc.part.related_parts[rId]
+                blob = part.blob
+            except Exception:
+                continue
+
+            # eerst proberen naar Cloudinary
+            url = _upload_bytes(blob)
+            if url:
+                urls.append(url)
+            else:
+                # nette fallback: data-uri
+                b64 = base64.b64encode(blob).decode("ascii")
+                urls.append(f"data:image/png;base64,{b64}")
+    return urls
 
 
-def _paragraph_has_image(para) -> bool:
-    """Detecteer of paragraaf een afbeelding (drawing) bevat."""
-    try:
-        for run in para.runs:
-            if run._r.xpath(".//w:drawing"):
-                return True
-    except Exception:
-        pass
-    return False
+def _is_heading(para) -> int:
+    name = (para.style.name or "").lower()
+    if name.startswith("heading") or name.startswith("kop"):
+        # probeer level uit naam te halen (1/2/3)
+        for n in ("1", "2", "3"):
+            if n in name:
+                return int(n)
+        return 1
+    return 0
 
 
-# --- HTML converter ---
 def docx_to_html(file_like) -> str:
     """
-    Simpele DOCX→HTML:
-      - Headings → <h1>/<h2>/<h3>
-      - Paragrafen → <p>
-      - Inline-afbeeldingen → upload naar Cloudinary (indien geconfigureerd) en zet <img src="">
-      - Fallback: data URI als Cloudinary niet beschikbaar is
+    DOCX → HTML met:
+      - <h1..h3> voor koppen
+      - <p> voor alinea's
+      - <img> voor inline-afbeeldingen (Cloudinary of data-uri)
     """
     doc = Document(file_like)
-
-    # verzamel image bytes één keer (we matchen 'next image' voor elke paragraaf met drawing)
-    image_blobs = _extract_all_image_blobs(doc)
-    img_idx = 0
-
-    parts = ['<div class="lesson">']
+    out = ['<div class="lesson">']
 
     for para in doc.paragraphs:
         text = (para.text or "").strip()
-        is_heading = (para.style.name or "").lower().startswith("heading")
+        level = _is_heading(para)
 
-        # 1) headings
-        if is_heading and text:
-            # bepaal level
-            level = 1
-            try:
-                # "Heading 1", "Kop 1", etc.
-                name = para.style.name
-                for n in ("1", "2", "3"):
-                    if n in name:
-                        level = int(n)
-                        break
-            except Exception:
-                pass
+        if level and text:
             level = min(3, max(1, level))
-            parts.append(f"<h{level}>{escape(text)}</h{level}>")
-            continue
+            out.append(f"<h{level}>{escape(text)}</h{level}>")
+        elif text:
+            out.append(f"<p>{escape(text)}</p>")
 
-        # 2) normale tekst
-        if text:
-            parts.append(f"<p>{escape(text)}</p>")
+        # afbeeldingen in deze paragraaf (precies gekoppeld aan de runs)
+        img_urls = _img_urls_for_paragraph(para, doc)
+        for url in img_urls:
+            out.append(f'<p><img src="{url}" alt="" loading="lazy"></p>')
 
-        # 3) inline afbeeldingen in deze paragraaf
-        if _paragraph_has_image(para) and img_idx < len(image_blobs):
-            # sommige paragrafen kunnen meerdere drawings hebben; we plaatsen er net zoveel als runs met drawing
-            drawings_in_para = 0
-            for run in para.runs:
-                if run._r.xpath(".//w:drawing") and img_idx < len(image_blobs):
-                    blob = image_blobs[img_idx]
-                    img_idx += 1
-                    drawings_in_para += 1
+    out.append("</div>")
+    return "\n".join(out)
 
-                    url = upload_image_bytes_to_cloudinary(blob)
-                    if url:
-                        parts.append(f'<p><img src="{url}" alt="" loading="lazy"></p>')
-                    else:
-                        # fallback: inline base64
-                        b64 = base64.b64encode(blob).decode("ascii")
-                        parts.append(f'<p><img src="data:image/png;base64,{b64}" alt="" loading="lazy"></p>')
-
-    parts.append("</div>")
-    return "\n".join(parts)
 
 
