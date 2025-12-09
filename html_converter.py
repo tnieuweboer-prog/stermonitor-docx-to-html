@@ -127,13 +127,12 @@ def docx_to_html(file_like) -> str:
     """
     doc = Document(file_like)
 
-    # --- Toegevoegd: achtergrondkleur + HTML-structuur ---
     out = [
         '<html>',
         '<head>',
         '<style>',
         'body { background-color: #c6d9aa; margin: 0; padding: 1rem; }',
-        '.lesson { max-width: 900px; margin: auto; font-family: Arial, sans-serif; }',
+        '.lesson { max-width: 900px; margin: 0; padding: 1rem; font-family: Arial, sans-serif; text-align: left; }',
         '</style>',
         '</head>',
         '<body>',
@@ -144,14 +143,11 @@ def docx_to_html(file_like) -> str:
         text = (para.text or "").strip()
         level = _is_heading(para)
 
-        # Tekst (kop of paragraaf)
         if level and text:
             out.append(f"<h{min(level,3)}>{escape(text)}</h{min(level,3)}>")
-
         elif text:
             out.append(f"<p>{escape(text)}</p>")
 
-        # Afbeeldingen
         imgs = _img_infos_for_paragraph(para, doc)
         if not imgs:
             continue
@@ -159,7 +155,6 @@ def docx_to_html(file_like) -> str:
         small_imgs = [i for i in imgs if i["small"]]
         big_imgs = [i for i in imgs if not i["small"]]
 
-        # Kleine naast elkaar
         if small_imgs:
             out.append('<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin:4px 0;">')
             for i in small_imgs:
@@ -169,7 +164,6 @@ def docx_to_html(file_like) -> str:
                 )
             out.append("</div>")
 
-        # Grote onder elkaar, max 300×300
         for i in big_imgs:
             out.append(
                 f'<p><img src="{i["url"]}" alt="" loading="lazy" '
@@ -181,4 +175,5 @@ def docx_to_html(file_like) -> str:
     out.append("</html>")
 
     return "\n".join(out)
+
 
