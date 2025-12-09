@@ -126,7 +126,19 @@ def docx_to_html(file_like) -> str:
           - Grotere (≥100×100) → vergroot tot max 300×300, onder elkaar
     """
     doc = Document(file_like)
-    out = ['<div class="lesson">']
+
+    # --- Toegevoegd: achtergrondkleur + HTML-structuur ---
+    out = [
+        '<html>',
+        '<head>',
+        '<style>',
+        'body { background-color: #c6d9aa; margin: 0; padding: 1rem; }',
+        '.lesson { max-width: 900px; margin: auto; font-family: Arial, sans-serif; }',
+        '</style>',
+        '</head>',
+        '<body>',
+        '<div class="lesson">'
+    ]
 
     for para in doc.paragraphs:
         text = (para.text or "").strip()
@@ -135,6 +147,7 @@ def docx_to_html(file_like) -> str:
         # Tekst (kop of paragraaf)
         if level and text:
             out.append(f"<h{min(level,3)}>{escape(text)}</h{min(level,3)}>")
+
         elif text:
             out.append(f"<p>{escape(text)}</p>")
 
@@ -164,6 +177,8 @@ def docx_to_html(file_like) -> str:
             )
 
     out.append("</div>")
-    return "\n".join(out)
+    out.append("</body>")
+    out.append("</html>")
 
+    return "\n".join(out)
 
