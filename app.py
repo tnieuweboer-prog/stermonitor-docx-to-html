@@ -92,7 +92,7 @@ with top4:
 
 # ---------- TABS ----------
 tab1, tab2, tab3 = st.tabs(
-    ["💚 HTML (Stermonitor / LessonUp)", "🤖 PowerPoint (AI-hybride)", "📘 Werkboekjes-generator"]
+    ["💚 HTML (Stermonitor/ Elodigitaal)", "🤖 PowerPoint", "📘 Werkboekjes-generator"]
 )
 
 # ---------------- TAB 1 ----------------
