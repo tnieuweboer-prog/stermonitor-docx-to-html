@@ -135,26 +135,20 @@ def _is_heading(para) -> int:
 # ---------- Hoofdconverter ----------
 def docx_to_html(file_like) -> str:
     """
-    DOCX → HTML met:
-      • Koppen als <h1..h3>
-      • Paragrafen als <p>
-      • Afbeeldingen:
-          - Kleine (<100×100) → naast elkaar
-          - Grotere ≥100×100 → max 300×300
+    DOCX → HTML met aangepaste paragrafen:
+      • Alle <p> krijgen class="light-green"
     """
 
     doc = Document(file_like)
 
-    # HTML + CSS inclusief achtergrond via class="green"
     out = [
         "<html>",
         "<head>",
         "<style>",
 
-        # Body reset
+        # Stermonitor body achtergrond
         "body { margin: 0; padding: 0; }",
 
-        # Achtergrondklasse voor Stermonitor
         ".green {",
         "    background-image: url('YOUR_ASSET_URL_HERE');",
         "    background-size: cover;",
@@ -162,7 +156,7 @@ def docx_to_html(file_like) -> str:
         "    background-position: center;",
         "}",
 
-        # Les-content container
+        # Tekstcontainer
         ".lesson {",
         "    max-width: 900px;",
         "    margin: 0;",
@@ -173,25 +167,37 @@ def docx_to_html(file_like) -> str:
         "    backdrop-filter: blur(2px);",
         "}",
 
+        # Jouw paragrafen
+        ".light-green {",
+        "    background: rgba(198, 217, 170, 0.6);",
+        "    padding: 6px;",
+        "    border-radius: 4px;",
+        "    margin: 4px 0;",
+        "}",
+
         "</style>",
         "</head>",
 
-        # 👇 IMPORTANT: body krijgt de klasse "green"
+        # Body krijgt class green
         "<body class='green'>",
 
         "<div class='lesson'>"
     ]
 
-    # ——— Tekst en afbeeldingen verwerken ———
+    # Verwerking van tekst en afbeeldingen
     for para in doc.paragraphs:
         text = (para.text or "").strip()
         level = _is_heading(para)
 
+        # Koppen blijven koppen
         if level and text:
             out.append(f"<h{min(level,3)}>{escape(text)}</h{min(level,3)}>")
-        elif text:
-            out.append(f"<p>{escape(text)}</p>")
 
+        # Paragrafen krijgen class="light-green"
+        elif text:
+            out.append(f'<p class="light-green">{escape(text)}</p>')
+
+        # Afbeeldingen verzamelen
         imgs = _img_infos_for_paragraph(para, doc)
         if not imgs:
             continue
@@ -202,7 +208,7 @@ def docx_to_html(file_like) -> str:
         # Kleine afbeeldingen naast elkaar
         if small_imgs:
             out.append(
-                '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin:4px 0;">'
+                '<div class="light-green" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;margin:4px 0;">'
             )
             for i in small_imgs:
                 out.append(
@@ -214,11 +220,10 @@ def docx_to_html(file_like) -> str:
         # Grote afbeeldingen onder elkaar
         for i in big_imgs:
             out.append(
-                f'<p><img src="{i["url"]}" alt="" loading="lazy" '
+                f'<p class="light-green"><img src="{i["url"]}" alt="" loading="lazy" '
                 f'style="max-width:300px;max-height:300px;object-fit:contain;" /></p>'
             )
 
-    # HTML afsluiten
     out.append("</div>")
     out.append("</body>")
     out.append("</html>")
